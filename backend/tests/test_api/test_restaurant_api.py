@@ -1,12 +1,14 @@
 """Contract and integration tests for TablePilot restaurant endpoints."""
 
 from io import BytesIO
+from typing import Optional
 
 
-def _upload(client, path: str, csv_text: str, filename: str = "data.csv"):
+def _upload(client, path: str, csv_text: str, filename: str = "data.csv", headers: Optional[dict] = None):
     return client.post(
         path,
         files={"file": (filename, BytesIO(csv_text.encode("utf-8")), "text/csv")},
+        headers=headers or {},
     )
 
 
@@ -44,6 +46,63 @@ def test_ingest_pos_csv_returns_row_level_errors_for_bad_rows(client):
     assert payload["rows_skipped"] == 1
     assert len(payload["row_errors"]) == 1
     assert payload["row_errors"][0]["row_number"] == 2
+
+
+def test_ingest_pos_csv_idempotency_key_prevents_duplicate_processing(client):
+    csv_text = (
+        "date,menu_item,quantity,net_sales,covers,channel,forecast_revenue\n"
+        "2026-03-08,Burger,10,180,20,in_store,200\n"
+    )
+    headers = {"Idempotency-Key": "pos-ingest-001"}
+    first = _upload(
+        client,
+        "/restaurant/ingest/pos-csv?venue_id=venue-idem-1",
+        csv_text,
+        headers=headers,
+    )
+    assert first.status_code == 200
+    assert first.json()["status"] == "success"
+    assert first.json()["rows_ingested"] == 1
+
+    second = _upload(
+        client,
+        "/restaurant/ingest/pos-csv?venue_id=venue-idem-1",
+        csv_text,
+        headers=headers,
+    )
+    assert second.status_code == 200
+    payload = second.json()
+    assert payload["status"] == "duplicate"
+    assert payload["dataset_type"] == "pos_csv"
+    assert payload["rows_ingested"] == 1
+
+
+def test_ingest_pos_csv_idempotency_key_rejects_changed_payload(client):
+    csv_a = (
+        "date,menu_item,quantity,net_sales,covers,channel,forecast_revenue\n"
+        "2026-03-08,Burger,10,180,20,in_store,200\n"
+    )
+    csv_b = (
+        "date,menu_item,quantity,net_sales,covers,channel,forecast_revenue\n"
+        "2026-03-08,Burger,11,198,22,in_store,220\n"
+    )
+    headers = {"Idempotency-Key": "pos-ingest-002"}
+    first = _upload(
+        client,
+        "/restaurant/ingest/pos-csv?venue_id=venue-idem-2",
+        csv_a,
+        headers=headers,
+    )
+    assert first.status_code == 200
+
+    second = _upload(
+        client,
+        "/restaurant/ingest/pos-csv?venue_id=venue-idem-2",
+        csv_b,
+        headers=headers,
+    )
+    assert second.status_code == 400
+    assert "different payload" in second.json()["detail"]
 
 
 def test_control_tower_margin_alerts_and_recommendations_flow(client):
@@ -320,3 +379,19 @@ def test_accelerated_sprint_features_rollup_optimizer_ordering_and_readiness(cli
     readiness_payload = readiness.json()
     assert "readiness_score" in readiness_payload
     assert readiness_payload["status_band"] in {"green", "amber", "red"}
+
+    supplier_risk = client.get(
+        "/restaurant/procurement/supplier-risk",
+        params={"from": "2026-03-12", "to": "2026-03-14"},
+    )
+    assert supplier_risk.status_code == 200
+    supplier_payload = supplier_risk.json()
+    assert "suppliers" in supplier_payload
+    if supplier_payload["suppliers"]:
+        assert "risk_band" in supplier_payload["suppliers"][0]
+
+    observability = client.get("/restaurant/observability/summary", params={"date": "2026-03-14"})
+    assert observability.status_code == 200
+    obs_payload = observability.json()
+    assert obs_payload["status"] in {"healthy", "warning", "degraded"}
+    assert "ingestion_health" in obs_payload

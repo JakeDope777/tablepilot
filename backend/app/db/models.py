@@ -335,6 +335,7 @@ class RestaurantVenue(Base):
     reviews = relationship("RestaurantReview", back_populates="venue")
     anomalies = relationship("RestaurantAnomaly", back_populates="venue")
     recommendations = relationship("RestaurantRecommendation", back_populates="venue")
+    ingestion_runs = relationship("RestaurantIngestionRun", back_populates="venue")
 
 
 class RestaurantSale(Base):
@@ -493,3 +494,23 @@ class RestaurantRecommendation(Base):
     )
 
     venue = relationship("RestaurantVenue", back_populates="recommendations")
+
+
+class RestaurantIngestionRun(Base):
+    __tablename__ = "restaurant_ingestion_runs"
+
+    id = Column(String, primary_key=True, default=generate_uuid)
+    venue_id = Column(String, ForeignKey("restaurant_venues.id"), nullable=False, index=True)
+    dataset_type = Column(String, nullable=False, index=True)
+    idempotency_key = Column(String, nullable=True, index=True)
+    payload_hash = Column(String, nullable=False, index=True)
+    status = Column(String, default="processed", nullable=False, index=True)
+    response_payload = Column(JSON, nullable=True)
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc), nullable=False)
+    updated_at = Column(
+        DateTime,
+        default=lambda: datetime.now(timezone.utc),
+        onupdate=lambda: datetime.now(timezone.utc),
+    )
+
+    venue = relationship("RestaurantVenue", back_populates="ingestion_runs")

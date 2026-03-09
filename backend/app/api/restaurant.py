@@ -1,6 +1,6 @@
 """TablePilot restaurant operations API endpoints."""
 
-from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
+from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile, Header
 from sqlalchemy.orm import Session
 from typing import Optional
 
@@ -21,11 +21,12 @@ def get_module() -> RestaurantOpsModule:
 async def ingest_pos_csv(
     file: UploadFile = File(...),
     venue_id: Optional[str] = Query(default=None),
+    idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
     db: Session = Depends(get_db),
     module: RestaurantOpsModule = Depends(get_module),
 ):
     try:
-        return module.ingest_pos_csv(db, await file.read(), venue_id)
+        return module.ingest_pos_csv(db, await file.read(), venue_id, idempotency_key=idempotency_key)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
 
@@ -34,11 +35,12 @@ async def ingest_pos_csv(
 async def ingest_purchases_csv(
     file: UploadFile = File(...),
     venue_id: Optional[str] = Query(default=None),
+    idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
     db: Session = Depends(get_db),
     module: RestaurantOpsModule = Depends(get_module),
 ):
     try:
-        return module.ingest_purchases_csv(db, await file.read(), venue_id)
+        return module.ingest_purchases_csv(db, await file.read(), venue_id, idempotency_key=idempotency_key)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
 
@@ -47,11 +49,12 @@ async def ingest_purchases_csv(
 async def ingest_labor_csv(
     file: UploadFile = File(...),
     venue_id: Optional[str] = Query(default=None),
+    idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
     db: Session = Depends(get_db),
     module: RestaurantOpsModule = Depends(get_module),
 ):
     try:
-        return module.ingest_labor_csv(db, await file.read(), venue_id)
+        return module.ingest_labor_csv(db, await file.read(), venue_id, idempotency_key=idempotency_key)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
 
@@ -60,11 +63,12 @@ async def ingest_labor_csv(
 async def ingest_reviews_csv(
     file: UploadFile = File(...),
     venue_id: Optional[str] = Query(default=None),
+    idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
     db: Session = Depends(get_db),
     module: RestaurantOpsModule = Depends(get_module),
 ):
     try:
-        return module.ingest_reviews_csv(db, await file.read(), venue_id)
+        return module.ingest_reviews_csv(db, await file.read(), venue_id, idempotency_key=idempotency_key)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
 
@@ -218,6 +222,20 @@ async def get_procurement_opportunities(
         raise HTTPException(status_code=400, detail=str(exc))
 
 
+@router.get("/procurement/supplier-risk")
+async def get_supplier_risk(
+    from_date: str = Query(..., alias="from", description="YYYY-MM-DD"),
+    to_date: str = Query(..., alias="to", description="YYYY-MM-DD"),
+    venue_id: Optional[str] = Query(default=None),
+    db: Session = Depends(get_db),
+    module: RestaurantOpsModule = Depends(get_module),
+):
+    try:
+        return module.get_supplier_risk(db, from_date, to_date, venue_id=venue_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+
 @router.get("/reports/weekly-owner")
 async def get_weekly_owner_report(
     week_start: str = Query(..., description="YYYY-MM-DD"),
@@ -326,5 +344,18 @@ async def get_ops_readiness(
 ):
     try:
         return module.get_ops_readiness(db, date, venue_id=venue_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+
+@router.get("/observability/summary")
+async def get_observability_summary(
+    date: str = Query(..., description="YYYY-MM-DD"),
+    venue_id: Optional[str] = Query(default=None),
+    db: Session = Depends(get_db),
+    module: RestaurantOpsModule = Depends(get_module),
+):
+    try:
+        return module.get_observability_summary(db, date, venue_id=venue_id)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))

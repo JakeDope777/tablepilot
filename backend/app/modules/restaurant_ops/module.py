@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import csv
+import hashlib
 import io
 from collections import defaultdict
 from dataclasses import dataclass
@@ -18,6 +19,7 @@ from ...db.models import (
     RestaurantRecipe,
     RestaurantRecipeIngredient,
     RestaurantRecommendation,
+    RestaurantIngestionRun,
     RestaurantReview,
     RestaurantSale,
     RestaurantStockSnapshot,
@@ -92,6 +94,76 @@ class RestaurantOpsModule:
             ),
         }
 
+    def _payload_hash(self, file_bytes: bytes) -> str:
+        return hashlib.sha256(file_bytes).hexdigest()
+
+    def _idempotency_duplicate(
+        self,
+        db: Session,
+        venue_id: str,
+        dataset_type: str,
+        idempotency_key: Optional[str],
+        payload_hash: str,
+    ) -> Optional[dict]:
+        if not idempotency_key:
+            return None
+        existing = (
+            db.query(RestaurantIngestionRun)
+            .filter(
+                RestaurantIngestionRun.venue_id == venue_id,
+                RestaurantIngestionRun.dataset_type == dataset_type,
+                RestaurantIngestionRun.idempotency_key == idempotency_key,
+            )
+            .order_by(RestaurantIngestionRun.created_at.desc())
+            .first()
+        )
+        if not existing:
+            return None
+        if existing.payload_hash != payload_hash:
+            raise ValueError("Idempotency key already used with a different payload")
+        stored = existing.response_payload or {}
+        duplicate_response = {
+            **stored,
+            "status": "duplicate",
+            "idempotency_key": idempotency_key,
+            "dataset_type": dataset_type,
+            "duplicate_of_run_id": existing.id,
+        }
+        db.add(
+            RestaurantIngestionRun(
+                venue_id=venue_id,
+                dataset_type=dataset_type,
+                idempotency_key=idempotency_key,
+                payload_hash=payload_hash,
+                status="duplicate",
+                response_payload=duplicate_response,
+            )
+        )
+        db.commit()
+        return duplicate_response
+
+    def _record_ingestion_run(
+        self,
+        db: Session,
+        venue_id: str,
+        dataset_type: str,
+        payload_hash: str,
+        idempotency_key: Optional[str],
+        response_payload: dict[str, Any],
+        status: str = "processed",
+    ) -> None:
+        db.add(
+            RestaurantIngestionRun(
+                venue_id=venue_id,
+                dataset_type=dataset_type,
+                idempotency_key=idempotency_key,
+                payload_hash=payload_hash,
+                status=status,
+                response_payload=response_payload,
+            )
+        )
+        db.commit()
+
     def _get_or_create_venue(self, db: Session, venue_id: Optional[str] = None) -> RestaurantVenue:
         if venue_id:
             venue = db.query(RestaurantVenue).filter(RestaurantVenue.id == venue_id).first()
@@ -140,12 +212,22 @@ class RestaurantOpsModule:
 
     # Ingestion -----------------------------------------------------------------
 
-    def ingest_pos_csv(self, db: Session, file_bytes: bytes, venue_id: Optional[str] = None) -> dict:
+    def ingest_pos_csv(
+        self,
+        db: Session,
+        file_bytes: bytes,
+        venue_id: Optional[str] = None,
+        idempotency_key: Optional[str] = None,
+    ) -> dict:
         rows = self._read_csv(file_bytes)
         required = {"date", "menu_item", "quantity", "net_sales"}
         self._validate_required_columns(rows, required)
 
         venue = self._get_or_create_venue(db, venue_id)
+        payload_hash = self._payload_hash(file_bytes)
+        duplicate = self._idempotency_duplicate(db, venue.id, "pos_csv", idempotency_key, payload_hash)
+        if duplicate:
+            return duplicate
         created = 0
         skipped = 0
         total_revenue = 0.0
@@ -183,7 +265,7 @@ class RestaurantOpsModule:
         if created == 0 and row_errors:
             raise ValueError("No valid POS rows to ingest")
         db.commit()
-        return {
+        result = {
             "status": "success",
             "venue_id": venue.id,
             "rows_ingested": created,
@@ -192,13 +274,32 @@ class RestaurantOpsModule:
             "date_range": {"from": min(dates) if dates else None, "to": max(dates) if dates else None},
             "totals": {"revenue": round(total_revenue, 2), "covers": total_covers},
         }
+        self._record_ingestion_run(
+            db,
+            venue_id=venue.id,
+            dataset_type="pos_csv",
+            payload_hash=payload_hash,
+            idempotency_key=idempotency_key,
+            response_payload=result,
+        )
+        return result
 
-    def ingest_purchases_csv(self, db: Session, file_bytes: bytes, venue_id: Optional[str] = None) -> dict:
+    def ingest_purchases_csv(
+        self,
+        db: Session,
+        file_bytes: bytes,
+        venue_id: Optional[str] = None,
+        idempotency_key: Optional[str] = None,
+    ) -> dict:
         rows = self._read_csv(file_bytes)
         required = {"date", "item_name", "quantity", "unit_cost"}
         self._validate_required_columns(rows, required)
 
         venue = self._get_or_create_venue(db, venue_id)
+        payload_hash = self._payload_hash(file_bytes)
+        duplicate = self._idempotency_duplicate(db, venue.id, "purchases_csv", idempotency_key, payload_hash)
+        if duplicate:
+            return duplicate
         created = 0
         skipped = 0
         total = 0.0
@@ -247,7 +348,7 @@ class RestaurantOpsModule:
         if created == 0 and row_errors:
             raise ValueError("No valid purchase rows to ingest")
         db.commit()
-        return {
+        result = {
             "status": "success",
             "venue_id": venue.id,
             "rows_ingested": created,
@@ -256,13 +357,32 @@ class RestaurantOpsModule:
             "date_range": {"from": min(dates) if dates else None, "to": max(dates) if dates else None},
             "totals": {"purchase_cost": round(total, 2)},
         }
+        self._record_ingestion_run(
+            db,
+            venue_id=venue.id,
+            dataset_type="purchases_csv",
+            payload_hash=payload_hash,
+            idempotency_key=idempotency_key,
+            response_payload=result,
+        )
+        return result
 
-    def ingest_labor_csv(self, db: Session, file_bytes: bytes, venue_id: Optional[str] = None) -> dict:
+    def ingest_labor_csv(
+        self,
+        db: Session,
+        file_bytes: bytes,
+        venue_id: Optional[str] = None,
+        idempotency_key: Optional[str] = None,
+    ) -> dict:
         rows = self._read_csv(file_bytes)
         required = {"date", "staff_name", "role", "hours_worked", "hourly_rate"}
         self._validate_required_columns(rows, required)
 
         venue = self._get_or_create_venue(db, venue_id)
+        payload_hash = self._payload_hash(file_bytes)
+        duplicate = self._idempotency_duplicate(db, venue.id, "labor_csv", idempotency_key, payload_hash)
+        if duplicate:
+            return duplicate
         created = 0
         skipped = 0
         total_cost = 0.0
@@ -297,7 +417,7 @@ class RestaurantOpsModule:
         if created == 0 and row_errors:
             raise ValueError("No valid labor rows to ingest")
         db.commit()
-        return {
+        result = {
             "status": "success",
             "venue_id": venue.id,
             "rows_ingested": created,
@@ -306,6 +426,15 @@ class RestaurantOpsModule:
             "date_range": {"from": min(dates) if dates else None, "to": max(dates) if dates else None},
             "totals": {"labor_cost": round(total_cost, 2)},
         }
+        self._record_ingestion_run(
+            db,
+            venue_id=venue.id,
+            dataset_type="labor_csv",
+            payload_hash=payload_hash,
+            idempotency_key=idempotency_key,
+            response_payload=result,
+        )
+        return result
 
     def _derive_sentiment(self, rating: float, text: str) -> float:
         base = (rating - 3.0) / 2.0
@@ -314,12 +443,22 @@ class RestaurantOpsModule:
         neg = sum(term in text_l for term in ["slow", "cold", "late", "rude", "bad", "expensive"])
         return max(-1.0, min(1.0, base + (pos - neg) * 0.08))
 
-    def ingest_reviews_csv(self, db: Session, file_bytes: bytes, venue_id: Optional[str] = None) -> dict:
+    def ingest_reviews_csv(
+        self,
+        db: Session,
+        file_bytes: bytes,
+        venue_id: Optional[str] = None,
+        idempotency_key: Optional[str] = None,
+    ) -> dict:
         rows = self._read_csv(file_bytes)
         required = {"date", "rating", "text"}
         self._validate_required_columns(rows, required)
 
         venue = self._get_or_create_venue(db, venue_id)
+        payload_hash = self._payload_hash(file_bytes)
+        duplicate = self._idempotency_duplicate(db, venue.id, "reviews_csv", idempotency_key, payload_hash)
+        if duplicate:
+            return duplicate
         created = 0
         skipped = 0
         sentiments: list[float] = []
@@ -352,7 +491,7 @@ class RestaurantOpsModule:
         if created == 0 and row_errors:
             raise ValueError("No valid review rows to ingest")
         db.commit()
-        return {
+        result = {
             "status": "success",
             "venue_id": venue.id,
             "rows_ingested": created,
@@ -361,6 +500,15 @@ class RestaurantOpsModule:
             "date_range": {"from": min(dates) if dates else None, "to": max(dates) if dates else None},
             "totals": {"avg_sentiment": round(sum(sentiments) / len(sentiments), 3) if sentiments else 0.0},
         }
+        self._record_ingestion_run(
+            db,
+            venue_id=venue.id,
+            dataset_type="reviews_csv",
+            payload_hash=payload_hash,
+            idempotency_key=idempotency_key,
+            response_payload=result,
+        )
+        return result
 
     def ingest_recipes(self, db: Session, recipes: list[dict], venue_id: Optional[str] = None) -> dict:
         venue = self._get_or_create_venue(db, venue_id)
@@ -984,6 +1132,96 @@ class RestaurantOpsModule:
             },
         }
 
+    def get_supplier_risk(self, db: Session, start_date: str, end_date: str, venue_id: Optional[str] = None) -> dict:
+        venue = self._get_or_create_venue(db, venue_id)
+        dr = DateRange(self._normalize_date(start_date), self._normalize_date(end_date))
+
+        rows = (
+            db.query(RestaurantPurchase)
+            .filter(
+                RestaurantPurchase.venue_id == venue.id,
+                RestaurantPurchase.purchase_date >= dr.start,
+                RestaurantPurchase.purchase_date <= dr.end,
+            )
+            .all()
+        )
+        if not rows:
+            return {
+                "date_range": {"from": dr.start, "to": dr.end},
+                "venue_id": venue.id,
+                "suppliers": [],
+                "summary": {"supplier_count": 0, "high_risk": 0, "medium_risk": 0, "low_risk": 0},
+            }
+
+        spend_total = sum(r.total_cost for r in rows)
+        supplier_spend: dict[str, float] = defaultdict(float)
+        supplier_items: dict[str, set[str]] = defaultdict(set)
+        item_suppliers: dict[str, set[str]] = defaultdict(set)
+        supplier_item_costs: dict[str, dict[str, list[float]]] = defaultdict(lambda: defaultdict(list))
+
+        for row in rows:
+            supplier = row.supplier or "Unknown supplier"
+            item = row.item_name.lower()
+            supplier_spend[supplier] += row.total_cost
+            supplier_items[supplier].add(item)
+            item_suppliers[item].add(supplier)
+            supplier_item_costs[supplier][item].append(max(row.unit_cost, 0.0))
+
+        suppliers = []
+        for supplier, spend in supplier_spend.items():
+            spend_share = (spend / spend_total * 100) if spend_total else 0.0
+            items = supplier_items[supplier]
+            single_source_items = [i for i in items if len(item_suppliers[i]) == 1]
+            dependency_pct = (len(single_source_items) / len(items) * 100) if items else 0.0
+
+            volatility_samples = []
+            for costs in supplier_item_costs[supplier].values():
+                if len(costs) < 2:
+                    continue
+                avg = sum(costs) / len(costs)
+                if avg <= 0:
+                    continue
+                volatility_samples.append(((max(costs) - min(costs)) / avg) * 100)
+            volatility_pct = sum(volatility_samples) / len(volatility_samples) if volatility_samples else 0.0
+
+            risk_score = min(100.0, 15.0 + spend_share * 0.5 + dependency_pct * 0.35 + volatility_pct * 0.4)
+            if risk_score >= 70:
+                band = "high"
+                action = "Qualify backup supplier and cap weekly allocation."
+            elif risk_score >= 40:
+                band = "medium"
+                action = "Track pricing weekly and diversify at least one key item."
+            else:
+                band = "low"
+                action = "Maintain current contract terms and monitor monthly."
+
+            suppliers.append(
+                {
+                    "supplier": supplier,
+                    "spend": round(spend, 2),
+                    "spend_share_pct": round(spend_share, 2),
+                    "items_count": len(items),
+                    "single_source_item_pct": round(dependency_pct, 2),
+                    "price_volatility_pct": round(volatility_pct, 2),
+                    "risk_score": round(risk_score, 2),
+                    "risk_band": band,
+                    "next_action": action,
+                }
+            )
+
+        suppliers.sort(key=lambda x: x["risk_score"], reverse=True)
+        return {
+            "date_range": {"from": dr.start, "to": dr.end},
+            "venue_id": venue.id,
+            "suppliers": suppliers,
+            "summary": {
+                "supplier_count": len(suppliers),
+                "high_risk": len([s for s in suppliers if s["risk_band"] == "high"]),
+                "medium_risk": len([s for s in suppliers if s["risk_band"] == "medium"]),
+                "low_risk": len([s for s in suppliers if s["risk_band"] == "low"]),
+            },
+        }
+
     def get_weekly_owner_report(self, db: Session, week_start: str, venue_id: Optional[str] = None) -> dict:
         venue = self._get_or_create_venue(db, venue_id)
         start = datetime.strptime(self._normalize_date(week_start), "%Y-%m-%d")
@@ -1390,6 +1628,91 @@ class RestaurantOpsModule:
                 if inventory["summary"]["alert_count"] > 0
                 else "Maintain current prep and ordering workflow.",
             ],
+        }
+
+    def get_observability_summary(self, db: Session, date: str, venue_id: Optional[str] = None) -> dict:
+        venue = self._get_or_create_venue(db, venue_id)
+        d = self._normalize_date(date)
+        d_obj = datetime.strptime(d, "%Y-%m-%d")
+        window_start = (d_obj - timedelta(days=6)).strftime("%Y-%m-%d")
+
+        ingestion_rows = (
+            db.query(RestaurantIngestionRun)
+            .filter(
+                RestaurantIngestionRun.venue_id == venue.id,
+                RestaurantIngestionRun.created_at >= datetime.strptime(window_start, "%Y-%m-%d"),
+            )
+            .all()
+        )
+        anomalies = (
+            db.query(RestaurantAnomaly)
+            .filter(RestaurantAnomaly.venue_id == venue.id, RestaurantAnomaly.anomaly_date == d)
+            .all()
+        )
+        recommendations = (
+            db.query(RestaurantRecommendation)
+            .filter(
+                RestaurantRecommendation.venue_id == venue.id,
+                RestaurantRecommendation.rec_date == d,
+                RestaurantRecommendation.status == "open",
+            )
+            .all()
+        )
+
+        max_sale = db.query(RestaurantSale).filter(RestaurantSale.venue_id == venue.id).order_by(RestaurantSale.sale_date.desc()).first()
+        max_purchase = (
+            db.query(RestaurantPurchase)
+            .filter(RestaurantPurchase.venue_id == venue.id)
+            .order_by(RestaurantPurchase.purchase_date.desc())
+            .first()
+        )
+        max_labor = (
+            db.query(RestaurantLaborShift)
+            .filter(RestaurantLaborShift.venue_id == venue.id)
+            .order_by(RestaurantLaborShift.shift_date.desc())
+            .first()
+        )
+
+        freshness = {
+            "last_sale_date": max_sale.sale_date if max_sale else None,
+            "last_purchase_date": max_purchase.purchase_date if max_purchase else None,
+            "last_labor_date": max_labor.shift_date if max_labor else None,
+        }
+        stale_sources = []
+        for src, value in freshness.items():
+            if not value:
+                stale_sources.append(src)
+                continue
+            age_days = (d_obj - datetime.strptime(value, "%Y-%m-%d")).days
+            if age_days > 2:
+                stale_sources.append(src)
+
+        readiness = self.get_ops_readiness(db, d, venue.id)
+        if readiness["status_band"] == "red" or stale_sources:
+            status = "degraded"
+        elif readiness["status_band"] == "amber":
+            status = "warning"
+        else:
+            status = "healthy"
+
+        return {
+            "date": d,
+            "window_start": window_start,
+            "venue_id": venue.id,
+            "status": status,
+            "ingestion_health": {
+                "total_runs_7d": len(ingestion_rows),
+                "processed_runs_7d": len([r for r in ingestion_rows if r.status == "processed"]),
+                "duplicate_runs_7d": len([r for r in ingestion_rows if r.status == "duplicate"]),
+                "failed_runs_7d": len([r for r in ingestion_rows if r.status == "failed"]),
+            },
+            "operations_health": {
+                "anomalies_today": len(anomalies),
+                "high_anomalies_today": len([a for a in anomalies if a.severity == "high"]),
+                "open_recommendations_today": len(recommendations),
+            },
+            "data_freshness": {**freshness, "stale_sources": stale_sources},
+            "readiness": readiness,
         }
 
     # Brain integration ----------------------------------------------------------
