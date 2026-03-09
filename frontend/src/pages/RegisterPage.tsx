@@ -31,7 +31,7 @@ export default function RegisterPage() {
     try {
       await signup(email, password);
       await trackEvent('signup_completed');
-      navigate('/app/dashboard');
+      navigate('/app/control-tower');
     } catch {
       setError('Signup failed. Email may already exist.');
     } finally {

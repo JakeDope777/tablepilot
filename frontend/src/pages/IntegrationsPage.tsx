@@ -28,7 +28,7 @@ interface ConnectorDetail {
 }
 
 const PROVIDERS = ['all', 'native', 'n8n'];
-const CATEGORIES = ['', 'crm', 'ads', 'analytics', 'commerce', 'automation', 'email', 'social'];
+const CATEGORIES = ['', 'pos', 'accounting', 'inventory', 'labor', 'reviews', 'analytics', 'automation'];
 
 const statusColor: Record<string, string> = {
   live: 'text-emerald-700 bg-emerald-50 ring-emerald-200',
@@ -170,7 +170,7 @@ export default function IntegrationsPage() {
             <p className="mt-1 text-sm text-slate-300">
               {stats
                 ? `${stats.total_connectors} native connectors · ${stats.snapshot_connectors}+ marketplace templates · ${stats.source_total_connectors} source integrations`
-                : 'Connect your entire marketing stack'}
+                : 'Connect your restaurant data stack'}
             </p>
           </div>
           <button
@@ -205,7 +205,7 @@ export default function IntegrationsPage() {
           <input
             value={search}
             onChange={(e) => setSearch(e.target.value)}
-            placeholder="Search 200+ connectors…"
+            placeholder="Search connectors..."
             className="h-9 rounded-lg border border-slate-200 bg-white pl-9 pr-3 text-sm text-slate-800 shadow-sm focus:border-orange-400 focus:outline-none focus:ring-1 focus:ring-orange-300 w-56"
           />
         </div>

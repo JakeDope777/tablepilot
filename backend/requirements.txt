@@ -1,4 +1,4 @@
-# Digital CMO AI - Backend Dependencies
+# TablePilot AI - Backend Dependencies
 
 # Web framework
 fastapi==0.115.6

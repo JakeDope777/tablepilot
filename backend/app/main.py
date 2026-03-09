@@ -31,7 +31,8 @@ app = FastAPI(
     version=settings.APP_VERSION,
     description=(
         "AI operating partner for restaurants with control tower, margin, "
-        "inventory/waste, labor, and manager chat workflows."
+        "inventory/waste, labor, and manager chat workflows. "
+        "Legacy marketing endpoints are retained as deprecated compatibility APIs."
     ),
     lifespan=lifespan,
 )
@@ -71,13 +72,10 @@ async def api_health():
         "version": settings.APP_VERSION,
         "status": "running",
         "modules": [
-            "brain_memory",
-            "business_analysis",
-            "creative_design",
-            "crm_campaign",
-            "analytics_reporting",
-            "integrations",
             "restaurant_ops",
+            "auth",
+            "integrations",
+            "legacy_marketing_compat",
         ],
     }
 
@@ -121,13 +119,10 @@ async def root(request: Request):
         "version": settings.APP_VERSION,
         "status": "running",
         "modules": [
-            "brain_memory",
-            "business_analysis",
-            "creative_design",
-            "crm_campaign",
-            "analytics_reporting",
-            "integrations",
             "restaurant_ops",
+            "auth",
+            "integrations",
+            "legacy_marketing_compat",
         ],
     }
 

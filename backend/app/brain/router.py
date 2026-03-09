@@ -364,16 +364,17 @@ class IntentRouter:
 
         try:
             prompt = (
-                "You are an intent classifier for a marketing AI assistant.\n"
+                "You are an intent classifier for an AI operations assistant.\n"
                 "Classify the following user message into exactly ONE of these categories:\n"
                 "  business_analysis, creative_design, crm_campaign, "
-                "analytics_reporting, integrations, system, general\n\n"
+                "analytics_reporting, integrations, restaurant_ops, system, general\n\n"
                 "Few-shot examples:\n"
                 '  "Do a SWOT analysis" → business_analysis\n'
                 '  "Write a blog post" → creative_design\n'
                 '  "Set up a drip campaign" → crm_campaign\n'
                 '  "Show me the dashboard" → analytics_reporting\n'
                 '  "Connect Google Ads" → integrations\n'
+                '  "Why was profit weak last week?" → restaurant_ops\n'
                 '  "Change my password" → system\n'
                 '  "Hello" → general\n\n'
                 f'User message: "{message}"\n\n'

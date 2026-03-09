@@ -395,3 +395,146 @@ def test_accelerated_sprint_features_rollup_optimizer_ordering_and_readiness(cli
     obs_payload = observability.json()
     assert obs_payload["status"] in {"healthy", "warning", "degraded"}
     assert "ingestion_health" in obs_payload
+
+
+def test_sprint_completion_price_simulator_productivity_templates_po_and_campaigns(client):
+    venue_id = "venue-sprint-completion"
+    pos_csv = (
+        "date,menu_item,quantity,net_sales,covers,channel,forecast_revenue\n"
+        "2026-03-15,Taco,40,480,52,in_store,510\n"
+        "2026-03-15,Bowl,28,420,31,in_store,450\n"
+    )
+    purchases_csv = (
+        "date,item_name,quantity,unit_cost,total_cost,supplier,on_hand_qty,par_level,waste_qty,theoretical_usage,actual_usage\n"
+        "2026-03-15,Tortilla,100,0.45,45,Supplier A,20,60,2,32,38\n"
+        "2026-03-15,Chicken,80,2.9,232,Supplier B,18,40,1,26,24\n"
+        "2026-03-12,Tortilla,100,0.4,40,Supplier A,42,60,0,25,25\n"
+    )
+    labor_csv = (
+        "date,staff_name,role,hours_worked,hourly_rate,labor_cost,scheduled_covers\n"
+        "2026-03-15,Alex,server,8,17,136,50\n"
+        "2026-03-15,Mia,cook,9,19,171,50\n"
+        "2026-03-15,Sam,bar,6,16,96,20\n"
+    )
+    recipe_payload = {
+        "recipes": [
+            {
+                "dish_name": "Taco",
+                "selling_price": 12,
+                "ingredients": [{"name": "Tortilla", "quantity": 1, "unit_cost": 0.45}],
+            },
+            {
+                "dish_name": "Bowl",
+                "selling_price": 15,
+                "ingredients": [{"name": "Chicken", "quantity": 0.25, "unit_cost": 2.9}],
+            },
+        ]
+    }
+
+    assert _upload(client, f"/restaurant/ingest/pos-csv?venue_id={venue_id}", pos_csv).status_code == 200
+    assert _upload(client, f"/restaurant/ingest/purchases-csv?venue_id={venue_id}", purchases_csv).status_code == 200
+    assert _upload(client, f"/restaurant/ingest/labor-csv?venue_id={venue_id}", labor_csv).status_code == 200
+    assert client.post(f"/restaurant/ingest/recipes?venue_id={venue_id}", json=recipe_payload).status_code == 200
+
+    simulator = client.post(
+        "/restaurant/menu/price-simulator",
+        json={
+            "from_date": "2026-03-15",
+            "to_date": "2026-03-15",
+            "venue_id": venue_id,
+            "elasticity": -1.1,
+            "adjustments": [
+                {"menu_item": "Taco", "price_change_pct": 4},
+                {"menu_item": "Bowl", "price_change_pct": 3},
+            ],
+        },
+    )
+    assert simulator.status_code == 200
+    sim_payload = simulator.json()
+    assert sim_payload["summary"]["items_simulated"] >= 1
+    assert "gross_margin_delta" in sim_payload["summary"]
+
+    productivity = client.get(
+        "/restaurant/labor/role-productivity",
+        params={"from": "2026-03-15", "to": "2026-03-15", "venue_id": venue_id},
+    )
+    assert productivity.status_code == 200
+    prod_payload = productivity.json()
+    assert prod_payload["summary"]["role_count"] >= 1
+    assert "revenue_per_labor_cost_eur" in prod_payload["roles"][0]
+
+    templates = client.post(
+        f"/restaurant/labor/shift-templates?venue_id={venue_id}",
+        json={
+            "templates": [
+                {
+                    "template_name": "weekday_lunch",
+                    "role": "server",
+                    "start_hour": 11,
+                    "end_hour": 16,
+                    "default_staff_count": 2,
+                    "target_covers": 45,
+                    "is_active": True,
+                },
+                {
+                    "template_name": "weekday_lunch",
+                    "role": "cook",
+                    "start_hour": 10,
+                    "end_hour": 16,
+                    "default_staff_count": 2,
+                    "target_covers": 45,
+                    "is_active": True,
+                },
+            ]
+        },
+    )
+    assert templates.status_code == 200
+    assert templates.json()["templates_upserted"] == 2
+
+    template_list = client.get("/restaurant/labor/shift-templates", params={"venue_id": venue_id})
+    assert template_list.status_code == 200
+    assert template_list.json()["summary"]["template_count"] >= 2
+
+    po = client.post(
+        "/restaurant/procurement/po-draft/from-auto-order",
+        params={"date": "2026-03-15", "venue_id": venue_id},
+    )
+    assert po.status_code == 200
+    po_payload = po.json()
+    po_id = po_payload["purchase_order"]["id"]
+    assert po_payload["purchase_order"]["line_count"] >= 1
+
+    approved = client.post(
+        f"/restaurant/procurement/po/{po_id}/approval",
+        json={"action": "approve", "approver": "gm@tablepilot.test", "comment": "Ready to place."},
+    )
+    assert approved.status_code == 200
+    assert approved.json()["purchase_order"]["status"] in {"approved", "ordered"}
+
+    campaign_upsert = client.post(
+        "/restaurant/reputation/campaigns/outcome",
+        json={
+            "campaign_date": "2026-03-15",
+            "campaign_type": "winback",
+            "channel": "sms",
+            "target_segment": "inactive_45d",
+            "sent_count": 120,
+            "redeemed_count": 18,
+            "revenue_generated": 860,
+            "cost": 140,
+            "status": "completed",
+            "venue_id": venue_id,
+        },
+    )
+    assert campaign_upsert.status_code == 200
+    camp_payload = campaign_upsert.json()
+    assert camp_payload["campaign"]["roi_pct"] is not None
+
+    campaign_perf = client.get(
+        "/restaurant/reputation/campaigns/performance",
+        params={"from": "2026-03-15", "to": "2026-03-15", "venue_id": venue_id},
+    )
+    assert campaign_perf.status_code == 200
+    perf_payload = campaign_perf.json()
+    assert perf_payload["summary"]["campaign_count"] >= 1
+    assert perf_payload["summary"]["redeemed_count"] == 18

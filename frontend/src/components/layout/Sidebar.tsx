@@ -2,10 +2,8 @@ import { NavLink } from 'react-router-dom';
 import {
   MessageSquare,
   LayoutDashboard,
-  Search,
-  Palette,
-  Users,
-  CreditCard,
+  TrendingUp,
+  Boxes,
   Settings,
   Brain,
   UserCircle2,
@@ -14,13 +12,11 @@ import {
 import clsx from 'clsx';
 
 export const navItems = [
-  { label: 'Dashboard', path: '/app/dashboard', icon: LayoutDashboard },
-  { label: 'Chat', path: '/app/chat', icon: MessageSquare },
-  { label: 'Analysis', path: '/app/analysis', icon: Search },
-  { label: 'Creative', path: '/app/creative', icon: Palette },
-  { label: 'CRM', path: '/app/crm', icon: Users },
+  { label: 'Control Tower', path: '/app/control-tower', icon: LayoutDashboard },
+  { label: 'Margin Brain', path: '/app/margin-brain', icon: TrendingUp },
+  { label: 'Inventory & Waste', path: '/app/inventory-waste', icon: Boxes },
+  { label: 'Manager Chat', path: '/app/manager-chat', icon: MessageSquare },
   { label: 'Integrations', path: '/app/integrations', icon: Plug },
-  { label: 'Billing', path: '/app/billing', icon: CreditCard },
   { label: 'Profile', path: '/app/profile', icon: UserCircle2 },
   { label: 'Settings', path: '/app/settings', icon: Settings },
 ];

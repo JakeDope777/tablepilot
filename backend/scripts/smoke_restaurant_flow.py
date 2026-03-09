@@ -64,7 +64,13 @@ def main() -> int:
         print("Recommendation count:", len(recommendations.json().get("recommendations", [])))
         print("Chat module:", chat.json().get("module_used"))
 
-        expected_ok = all(code == 200 for code in status.values())
+        recommendation_count = len(recommendations.json().get("recommendations", []))
+        chat_module = chat.json().get("module_used")
+        expected_ok = (
+            all(code == 200 for code in status.values())
+            and recommendation_count >= 1
+            and chat_module == "restaurant_ops"
+        )
         return 0 if expected_ok else 1
 
 

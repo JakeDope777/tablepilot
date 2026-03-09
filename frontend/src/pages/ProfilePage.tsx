@@ -6,8 +6,8 @@ import { trackEvent } from '../services/analytics';
 
 export default function ProfilePage() {
   const { user, refreshUser } = useAuth();
-  const [name, setName] = useState(user?.full_name || 'Marketing Lead');
-  const [company, setCompany] = useState(user?.company || 'Acme Growth Labs');
+  const [name, setName] = useState(user?.full_name || 'Restaurant Manager');
+  const [company, setCompany] = useState(user?.company || 'TablePilot Demo Venue');
   const [timezone, setTimezone] = useState(user?.timezone || 'Europe/Madrid');
   const [saved, setSaved] = useState(false);
   const [saving, setSaving] = useState(false);

@@ -25,7 +25,7 @@ export default function Header({ onMenuClick }: HeaderProps) {
           <Menu className="w-5 h-5" />
         </button>
         <div>
-          <p className="text-xs uppercase tracking-[0.2em] text-slate-500">Control Center</p>
+          <p className="text-xs uppercase tracking-[0.2em] text-slate-500">Restaurant Control Center</p>
           <h2 className="text-sm sm:text-base font-semibold text-slate-900">TablePilot AI</h2>
         </div>
       </div>

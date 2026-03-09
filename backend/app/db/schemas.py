@@ -413,6 +413,54 @@ class VenueKpiSettingsRequest(BaseModel):
     sales_drop_alert_pct: Optional[float] = None
 
 
+class MenuPriceAdjustment(BaseModel):
+    menu_item: str
+    price_change_pct: float
+
+
+class MenuPriceSimulationRequest(BaseModel):
+    from_date: str
+    to_date: str
+    elasticity: float = -1.2
+    adjustments: Optional[list[MenuPriceAdjustment]] = None
+    venue_id: Optional[str] = None
+    fixed_cost_per_day: float = 3000.0
+
+
+class ShiftTemplateInput(BaseModel):
+    template_name: str
+    role: str
+    start_hour: int
+    end_hour: int
+    default_staff_count: int = 1
+    target_covers: int = 0
+    is_active: bool = True
+
+
+class ShiftTemplateBatchRequest(BaseModel):
+    templates: list[ShiftTemplateInput]
+
+
+class PurchaseOrderApprovalRequest(BaseModel):
+    action: str
+    approver: Optional[str] = None
+    comment: Optional[str] = None
+
+
+class CampaignOutcomeRequest(BaseModel):
+    campaign_date: str
+    campaign_type: str
+    channel: str
+    target_segment: Optional[str] = None
+    sent_count: int = 0
+    redeemed_count: int = 0
+    revenue_generated: float = 0.0
+    cost: float = 0.0
+    status: str = "completed"
+    venue_id: Optional[str] = None
+    meta: Optional[dict[str, Any]] = None
+
+
 # ── Analytics & Reporting ─────────────────────────────────────────────
 
 class DashboardRequest(BaseModel):

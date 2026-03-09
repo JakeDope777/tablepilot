@@ -80,9 +80,9 @@ export default function ChatPage() {
       {/* Header */}
       <div className="flex items-center justify-between mb-4">
         <div>
-          <h2 className="text-xl font-bold text-gray-900">AI Marketing Assistant</h2>
+          <h2 className="text-xl font-bold text-gray-900">AI Manager Chat</h2>
           <p className="text-sm text-gray-500">
-            Ask about market research, campaigns, analytics, creative content, and more.
+            Ask about profit, waste, labor pressure, reorders, menu margin, and service quality.
           </p>
         </div>
         {messages.length > 0 && (
@@ -97,13 +97,13 @@ export default function ChatPage() {
         {messages.length === 0 && (
           <div className="flex flex-col items-center justify-center h-full text-center text-gray-400">
             <Bot className="w-16 h-16 mb-4 text-primary-300" />
-            <p className="text-lg font-medium text-gray-600">How can I help with your marketing today?</p>
+            <p className="text-lg font-medium text-gray-600">How can I help run your restaurant today?</p>
             <div className="mt-6 grid grid-cols-1 sm:grid-cols-2 gap-3 max-w-lg">
               {[
-                'Do a SWOT analysis for our SaaS product',
-                'Write a LinkedIn post about AI trends',
-                'Show me dashboard metrics',
-                'Create a welcome email campaign',
+                'Why was profit weak last week?',
+                'What should I reorder tomorrow?',
+                'Which shift is inefficient after 18:00?',
+                'Why are reviews dropping this week?',
               ].map((suggestion) => (
                 <button
                   key={suggestion}
@@ -175,7 +175,7 @@ export default function ChatPage() {
             value={input}
             onChange={(e) => setInput(e.target.value)}
             onKeyDown={handleKeyDown}
-            placeholder="Type your message..."
+            placeholder="Ask your AI manager..."
             rows={1}
             className="input-field resize-none"
           />

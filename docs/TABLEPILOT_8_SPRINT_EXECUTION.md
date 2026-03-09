@@ -1,91 +1,47 @@
-# TablePilot 8-Sprint Execution (Compressed Pilot Program)
+# TablePilot 8-Sprint Execution (Hard-Replace Fork)
 
-## Status Snapshot (as of 2026-03-09)
+## Status Snapshot (2026-03-09)
 
-- Project fork created: `/Users/jakedope/Documents/Playground/tablepilot-ai`
-- Pilot preview deployed on Vercel (preview environment)
-- Core restaurant pilot modules shipped:
-  - Control Tower
-  - Finance/Margin
-  - Inventory/Waste
-  - Manager Chat
-- Extended operational endpoints shipped:
-  - Portfolio rollup
-  - Labor optimizer
-  - Inventory auto-order draft
-  - Menu repricing suggestions
-  - Reputation win-back playbook
-  - Ops readiness scoring
+- Fork workspace: `/Users/jakedope/Documents/Playground/tablepilot-ai`
+- Brand locked: `TablePilot`
+- Primary product surface is restaurant-first (Control Tower, Margin Brain, Inventory & Waste, Manager Chat)
+- Canonical demo artifact: `demo/tablepilot-pilot-demo.html`
+- Legacy marketing backend APIs retained as deprecated compatibility only
 
-## Sprint Map
+## Sprint Completion Map
 
 ### Sprint 1: Platform Separation and Rebrand
-- Done:
-  - Migrated app identity to TablePilot in backend/frontend core surfaces
-  - Added fork bootstrap script
-- Next:
-  - Rename legacy marketing modules and paths to neutral/internal naming
-  - Move TablePilot repo to dedicated remote origin
+- Completed: top-level identity rewritten to TablePilot in root docs and active UI surfaces.
+- Pending: attach dedicated remote origin for this fork.
 
 ### Sprint 2: Data Ingestion and Validation
-- Done:
-  - POS, purchases, labor, recipes, reviews ingestion endpoints
-  - CSV validation and normalization paths
-- Next:
-  - Add structured ingestion error reports with row-level diagnostics
-  - Add idempotency keys for repeated uploads
+- Completed: CSV ingestion endpoints, row-level errors, idempotency keys.
 
 ### Sprint 3: Control Tower Intelligence
-- Done:
-  - Daily KPI aggregation
-  - Anomaly detection and recommendation generation
-- Next:
-  - Add configurable venue thresholds and anomaly sensitivity profiles
+- Completed: daily KPIs, anomaly detection, venue threshold settings, recommendations.
 
 ### Sprint 4: Margin and Menu Engine
-- Done:
-  - Margin by dish/channel
-  - Menu engineering matrix
-  - Repricing suggestions endpoint
-- Next:
-  - Add scenario simulator for price elasticity assumptions
+- Completed: margin analysis, menu engineering, repricing, price scenario simulator.
 
 ### Sprint 5: Inventory and Procurement Automation
-- Done:
-  - Inventory alerts, variance detection
-  - Procurement opportunities
-  - Auto-order draft endpoint
-- Next:
-  - Add supplier SLA/risk scoring and PO approval workflow state
+- Completed: waste/variance alerts, supplier risk scoring, auto-order and PO approval workflow.
 
 ### Sprint 6: Labor and Service Optimization
-- Done:
-  - Labor forecast
-  - Labor optimizer recommendation endpoint
-  - Hire-check scenario endpoint
-- Next:
-  - Add role-level productivity metrics and shift templates
+- Completed: labor forecast, labor optimizer, role productivity metrics, shift templates.
 
 ### Sprint 7: Reputation and CRM Loop
-- Done:
-  - Reviews ingestion
-  - Weekly complaint clustering
-  - Win-back playbook endpoint
-- Next:
-  - Add campaign execution connectors and outcome tracking
+- Completed: review ingestion, win-back playbook, campaign outcome and performance tracking.
 
 ### Sprint 8: Pilot Hardening and Launch Ops
-- Done:
-  - Backend and frontend build/test gates green
-  - Preview deployment workflow used successfully
-- Next:
-  - Add observability dashboard (error rate, API latency, ingestion health)
-  - Add pilot runbook and rollback checklist
+- Completed: regression test gates, build gates, observability summary endpoint, smoke script.
+- Pending: final remote publish step and latest preview URL handoff.
 
-## Immediate Next Build Queue (Execution Order)
+## Acceptance Scope (TablePilot)
 
-1. Row-level CSV error reporting (high impact on pilot onboarding)
-2. Configurable KPI thresholds per venue
-3. Idempotent ingestion keys and duplicate upload guards
-4. Supplier SLA/risk score module
-5. Observability health endpoint bundle for pilot operations
+- Frontend primary routes:
+  - `/app/control-tower`
+  - `/app/margin-brain`
+  - `/app/inventory-waste`
+  - `/app/manager-chat`
+- Backend primary contract: `/restaurant/*`
+- Legacy endpoints: operational but deprecated and out of acceptance scope.

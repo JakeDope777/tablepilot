@@ -4,7 +4,15 @@ from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile, 
 from sqlalchemy.orm import Session
 from typing import Optional
 
-from ..db.schemas import HireScenarioRequest, RecipeBatchRequest, VenueKpiSettingsRequest
+from ..db.schemas import (
+    CampaignOutcomeRequest,
+    HireScenarioRequest,
+    MenuPriceSimulationRequest,
+    PurchaseOrderApprovalRequest,
+    RecipeBatchRequest,
+    ShiftTemplateBatchRequest,
+    VenueKpiSettingsRequest,
+)
 from ..db.session import get_db
 from ..modules.restaurant_ops import RestaurantOpsModule
 
@@ -322,6 +330,26 @@ async def get_menu_repricing(
         raise HTTPException(status_code=400, detail=str(exc))
 
 
+@router.post("/menu/price-simulator")
+async def run_menu_price_simulator(
+    payload: MenuPriceSimulationRequest,
+    db: Session = Depends(get_db),
+    module: RestaurantOpsModule = Depends(get_module),
+):
+    try:
+        return module.simulate_menu_price_scenarios(
+            db,
+            start_date=payload.from_date,
+            end_date=payload.to_date,
+            elasticity=payload.elasticity,
+            adjustments=[a.model_dump() for a in (payload.adjustments or [])],
+            venue_id=payload.venue_id,
+            fixed_cost_per_day=payload.fixed_cost_per_day,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+
 @router.get("/reputation/winback")
 async def get_reputation_winback(
     week_start: str = Query(..., description="YYYY-MM-DD"),
@@ -335,6 +363,37 @@ async def get_reputation_winback(
         raise HTTPException(status_code=400, detail=str(exc))
 
 
+@router.post("/reputation/campaigns/outcome")
+async def upsert_campaign_outcome(
+    payload: CampaignOutcomeRequest,
+    venue_id: Optional[str] = Query(default=None),
+    db: Session = Depends(get_db),
+    module: RestaurantOpsModule = Depends(get_module),
+):
+    try:
+        return module.upsert_campaign_outcome(
+            db,
+            venue_id=venue_id or payload.venue_id,
+            campaign=payload.model_dump(),
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+
+@router.get("/reputation/campaigns/performance")
+async def get_campaign_performance(
+    from_date: str = Query(..., alias="from", description="YYYY-MM-DD"),
+    to_date: str = Query(..., alias="to", description="YYYY-MM-DD"),
+    venue_id: Optional[str] = Query(default=None),
+    db: Session = Depends(get_db),
+    module: RestaurantOpsModule = Depends(get_module),
+):
+    try:
+        return module.get_campaign_performance(db, from_date, to_date, venue_id=venue_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+
 @router.get("/ops/readiness")
 async def get_ops_readiness(
     date: str = Query(..., description="YYYY-MM-DD"),
@@ -344,6 +403,82 @@ async def get_ops_readiness(
 ):
     try:
         return module.get_ops_readiness(db, date, venue_id=venue_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+
+@router.get("/labor/role-productivity")
+async def get_role_productivity(
+    from_date: str = Query(..., alias="from", description="YYYY-MM-DD"),
+    to_date: str = Query(..., alias="to", description="YYYY-MM-DD"),
+    venue_id: Optional[str] = Query(default=None),
+    db: Session = Depends(get_db),
+    module: RestaurantOpsModule = Depends(get_module),
+):
+    try:
+        return module.get_labor_role_productivity(db, from_date, to_date, venue_id=venue_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+
+@router.post("/labor/shift-templates")
+async def upsert_shift_templates(
+    payload: ShiftTemplateBatchRequest,
+    venue_id: Optional[str] = Query(default=None),
+    db: Session = Depends(get_db),
+    module: RestaurantOpsModule = Depends(get_module),
+):
+    try:
+        return module.upsert_shift_templates(
+            db,
+            templates=[t.model_dump() for t in payload.templates],
+            venue_id=venue_id,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+
+@router.get("/labor/shift-templates")
+async def get_shift_templates(
+    venue_id: Optional[str] = Query(default=None),
+    include_inactive: bool = Query(default=False),
+    db: Session = Depends(get_db),
+    module: RestaurantOpsModule = Depends(get_module),
+):
+    try:
+        return module.get_shift_templates(db, venue_id=venue_id, include_inactive=include_inactive)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+
+@router.post("/procurement/po-draft/from-auto-order")
+async def create_po_draft_from_auto_order(
+    date: str = Query(..., description="YYYY-MM-DD"),
+    venue_id: Optional[str] = Query(default=None),
+    db: Session = Depends(get_db),
+    module: RestaurantOpsModule = Depends(get_module),
+):
+    try:
+        return module.create_purchase_order_from_auto_order(db, date, venue_id=venue_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+
+@router.post("/procurement/po/{purchase_order_id}/approval")
+async def update_po_approval(
+    purchase_order_id: str,
+    payload: PurchaseOrderApprovalRequest,
+    db: Session = Depends(get_db),
+    module: RestaurantOpsModule = Depends(get_module),
+):
+    try:
+        return module.update_purchase_order_approval(
+            db,
+            purchase_order_id=purchase_order_id,
+            action=payload.action,
+            approver=payload.approver,
+            comment=payload.comment,
+        )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
 

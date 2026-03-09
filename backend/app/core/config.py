@@ -36,7 +36,7 @@ class Settings(BaseSettings):
     OPENAI_API_KEY: Optional[str] = None
     OPENAI_MODEL: str = "gpt-4.1-mini"
     OPENAI_BASE_URL: Optional[str] = None
-    TELEGRAM_FALLBACK_BOT: Optional[str] = "@baltazar_loco_bot"
+    TELEGRAM_FALLBACK_BOT: Optional[str] = None
 
     # Vector Database (FAISS)
     VECTOR_DB_PATH: str = "./data/vector_store"

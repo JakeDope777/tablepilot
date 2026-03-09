@@ -42,11 +42,11 @@ export default function SettingsPage() {
         </p>
         <div className="bg-gray-50 rounded-lg p-4 text-xs font-mono text-gray-600 space-y-1">
           <p>OPENAI_API_KEY=sk-...</p>
-          <p>HUBSPOT_API_KEY=pat-...</p>
-          <p>SENDGRID_API_KEY=SG....</p>
-          <p>GOOGLE_ADS_CLIENT_ID=...</p>
-          <p>GOOGLE_ANALYTICS_PROPERTY_ID=...</p>
-          <p>LINKEDIN_CLIENT_ID=...</p>
+          <p>DATABASE_URL=sqlite:///./data/tablepilot.db</p>
+          <p>POS_CONNECTOR_MODE=csv</p>
+          <p>PURCHASES_CONNECTOR_MODE=csv</p>
+          <p>LABOR_CONNECTOR_MODE=csv</p>
+          <p>REVIEWS_CONNECTOR_MODE=csv</p>
         </div>
       </div>
 

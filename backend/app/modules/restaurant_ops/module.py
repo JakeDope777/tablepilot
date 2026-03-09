@@ -14,7 +14,9 @@ from sqlalchemy.orm import Session
 
 from ...db.models import (
     RestaurantAnomaly,
+    RestaurantCampaignRun,
     RestaurantLaborShift,
+    RestaurantPurchaseOrder,
     RestaurantPurchase,
     RestaurantRecipe,
     RestaurantRecipeIngredient,
@@ -22,6 +24,7 @@ from ...db.models import (
     RestaurantIngestionRun,
     RestaurantReview,
     RestaurantSale,
+    RestaurantShiftTemplate,
     RestaurantStockSnapshot,
     RestaurantVenue,
 )
@@ -1628,6 +1631,514 @@ class RestaurantOpsModule:
                 if inventory["summary"]["alert_count"] > 0
                 else "Maintain current prep and ordering workflow.",
             ],
+        }
+
+    def simulate_menu_price_scenarios(
+        self,
+        db: Session,
+        start_date: str,
+        end_date: str,
+        elasticity: float = -1.2,
+        adjustments: Optional[list[dict[str, Any]]] = None,
+        venue_id: Optional[str] = None,
+        fixed_cost_per_day: float = 3000.0,
+    ) -> dict:
+        venue = self._get_or_create_venue(db, venue_id)
+        dr = DateRange(self._normalize_date(start_date), self._normalize_date(end_date))
+        base = self.get_finance_margin(db, dr.start, dr.end, venue.id, fixed_cost=fixed_cost_per_day)
+
+        item_lookup = {(i["menu_item"] or "").lower(): i for i in base["items"]}
+        auto_adjustments = adjustments or []
+        if not auto_adjustments:
+            repricing = self.get_menu_repricing(db, dr.start, dr.end, venue.id)
+            auto_adjustments = [
+                {
+                    "menu_item": row["menu_item"],
+                    "price_change_pct": row["recommended_change_pct"],
+                }
+                for row in repricing["repricing_suggestions"][:8]
+                if row["recommended_change_pct"] > 0
+            ]
+
+        if not auto_adjustments:
+            return {
+                "date_range": {"from": dr.start, "to": dr.end},
+                "venue_id": venue.id,
+                "elasticity": elasticity,
+                "scenarios": [],
+                "summary": {
+                    "items_simulated": 0,
+                    "current_revenue": base["summary"]["revenue"],
+                    "projected_revenue": base["summary"]["revenue"],
+                    "current_gross_margin": base["summary"]["gross_margin"],
+                    "projected_gross_margin": base["summary"]["gross_margin"],
+                    "revenue_delta": 0.0,
+                    "gross_margin_delta": 0.0,
+                },
+            }
+
+        scenarios = []
+        projected_revenue = base["summary"]["revenue"]
+        projected_gross_margin = base["summary"]["gross_margin"]
+        cogs_delta_total = 0.0
+
+        for row in auto_adjustments:
+            menu_item = (row.get("menu_item") or "").strip()
+            if not menu_item:
+                continue
+            item = item_lookup.get(menu_item.lower())
+            if not item:
+                continue
+            base_qty = float(item["quantity"] or 0)
+            if base_qty <= 0:
+                continue
+
+            change_pct = self._parse_float(row.get("price_change_pct"), 0.0)
+            change_ratio = change_pct / 100.0
+            current_avg_price = (item["revenue"] / base_qty) if base_qty else 0.0
+            cogs_per_unit = (item["estimated_cogs"] / base_qty) if base_qty else 0.0
+
+            projected_qty = max(0.0, base_qty * (1 + elasticity * change_ratio))
+            projected_price = max(0.0, current_avg_price * (1 + change_ratio))
+            projected_item_revenue = projected_qty * projected_price
+            projected_item_cogs = projected_qty * cogs_per_unit
+            projected_item_margin = projected_item_revenue - projected_item_cogs
+
+            revenue_delta = projected_item_revenue - item["revenue"]
+            margin_delta = projected_item_margin - item["gross_margin"]
+            cogs_delta = projected_item_cogs - item["estimated_cogs"]
+
+            projected_revenue += revenue_delta
+            projected_gross_margin += margin_delta
+            cogs_delta_total += cogs_delta
+
+            scenarios.append(
+                {
+                    "menu_item": item["menu_item"],
+                    "base_quantity": round(base_qty, 2),
+                    "base_avg_price": round(current_avg_price, 2),
+                    "base_revenue": round(item["revenue"], 2),
+                    "base_gross_margin": round(item["gross_margin"], 2),
+                    "price_change_pct": round(change_pct, 2),
+                    "projected_quantity": round(projected_qty, 2),
+                    "projected_avg_price": round(projected_price, 2),
+                    "projected_revenue": round(projected_item_revenue, 2),
+                    "projected_gross_margin": round(projected_item_margin, 2),
+                    "projected_margin_pct": round((projected_item_margin / projected_item_revenue * 100) if projected_item_revenue else 0.0, 2),
+                    "revenue_delta": round(revenue_delta, 2),
+                    "gross_margin_delta": round(margin_delta, 2),
+                    "cogs_delta": round(cogs_delta, 2),
+                }
+            )
+
+        scenarios.sort(key=lambda x: x["gross_margin_delta"], reverse=True)
+        return {
+            "date_range": {"from": dr.start, "to": dr.end},
+            "venue_id": venue.id,
+            "elasticity": round(elasticity, 3),
+            "scenarios": scenarios,
+            "summary": {
+                "items_simulated": len(scenarios),
+                "current_revenue": round(base["summary"]["revenue"], 2),
+                "projected_revenue": round(projected_revenue, 2),
+                "current_gross_margin": round(base["summary"]["gross_margin"], 2),
+                "projected_gross_margin": round(projected_gross_margin, 2),
+                "revenue_delta": round(projected_revenue - base["summary"]["revenue"], 2),
+                "gross_margin_delta": round(projected_gross_margin - base["summary"]["gross_margin"], 2),
+                "estimated_cogs_delta": round(cogs_delta_total, 2),
+            },
+        }
+
+    def get_labor_role_productivity(self, db: Session, start_date: str, end_date: str, venue_id: Optional[str] = None) -> dict:
+        venue = self._get_or_create_venue(db, venue_id)
+        dr = DateRange(self._normalize_date(start_date), self._normalize_date(end_date))
+
+        shifts = (
+            db.query(RestaurantLaborShift)
+            .filter(
+                RestaurantLaborShift.venue_id == venue.id,
+                RestaurantLaborShift.shift_date >= dr.start,
+                RestaurantLaborShift.shift_date <= dr.end,
+            )
+            .all()
+        )
+        sales = (
+            db.query(RestaurantSale)
+            .filter(
+                RestaurantSale.venue_id == venue.id,
+                RestaurantSale.sale_date >= dr.start,
+                RestaurantSale.sale_date <= dr.end,
+            )
+            .all()
+        )
+
+        revenue_by_date: dict[str, float] = defaultdict(float)
+        covers_by_date: dict[str, int] = defaultdict(int)
+        for row in sales:
+            revenue_by_date[row.sale_date] += row.net_sales
+            covers_by_date[row.sale_date] += row.covers
+
+        hours_by_date: dict[str, float] = defaultdict(float)
+        for row in shifts:
+            hours_by_date[row.shift_date] += row.hours_worked
+
+        by_role: dict[str, dict[str, float]] = {}
+        for row in shifts:
+            role = row.role or "unknown"
+            payload = by_role.setdefault(
+                role,
+                {
+                    "role": role,
+                    "shifts": 0.0,
+                    "hours_worked": 0.0,
+                    "labor_cost": 0.0,
+                    "scheduled_covers": 0.0,
+                    "allocated_revenue": 0.0,
+                },
+            )
+            payload["shifts"] += 1
+            payload["hours_worked"] += row.hours_worked
+            payload["labor_cost"] += row.labor_cost
+            payload["scheduled_covers"] += row.scheduled_covers
+            day_hours = hours_by_date.get(row.shift_date, 0.0)
+            if day_hours > 0:
+                payload["allocated_revenue"] += revenue_by_date.get(row.shift_date, 0.0) * (row.hours_worked / day_hours)
+
+        role_rows = []
+        for payload in by_role.values():
+            hours = payload["hours_worked"]
+            cost = payload["labor_cost"]
+            alloc_rev = payload["allocated_revenue"]
+            productivity = (alloc_rev / cost) if cost > 0 else 0.0
+            covers_per_hour = (payload["scheduled_covers"] / hours) if hours > 0 else 0.0
+            labor_pct = (cost / alloc_rev * 100) if alloc_rev > 0 else 0.0
+            if productivity >= 2.4:
+                band = "high"
+            elif productivity >= 1.6:
+                band = "medium"
+            else:
+                band = "low"
+            role_rows.append(
+                {
+                    "role": payload["role"],
+                    "shift_count": int(payload["shifts"]),
+                    "hours_worked": round(hours, 2),
+                    "labor_cost": round(cost, 2),
+                    "scheduled_covers": int(payload["scheduled_covers"]),
+                    "covers_per_labor_hour": round(covers_per_hour, 2),
+                    "allocated_revenue": round(alloc_rev, 2),
+                    "revenue_per_labor_cost_eur": round(productivity, 2),
+                    "labor_pct_of_allocated_revenue": round(labor_pct, 2),
+                    "productivity_band": band,
+                }
+            )
+
+        role_rows.sort(key=lambda x: x["labor_cost"], reverse=True)
+        total_hours = sum(r["hours_worked"] for r in role_rows)
+        total_cost = sum(r["labor_cost"] for r in role_rows)
+        total_alloc_rev = sum(r["allocated_revenue"] for r in role_rows)
+        return {
+            "date_range": {"from": dr.start, "to": dr.end},
+            "venue_id": venue.id,
+            "roles": role_rows,
+            "summary": {
+                "role_count": len(role_rows),
+                "total_hours": round(total_hours, 2),
+                "total_labor_cost": round(total_cost, 2),
+                "allocated_revenue": round(total_alloc_rev, 2),
+                "avg_revenue_per_labor_cost_eur": round((total_alloc_rev / total_cost) if total_cost > 0 else 0.0, 2),
+            },
+        }
+
+    def upsert_shift_templates(self, db: Session, templates: list[dict[str, Any]], venue_id: Optional[str] = None) -> dict:
+        venue = self._get_or_create_venue(db, venue_id)
+        upserted = 0
+        for row in templates:
+            template_name = (row.get("template_name") or "").strip()
+            role = (row.get("role") or "").strip()
+            if not template_name or not role:
+                raise ValueError("template_name and role are required")
+
+            start_hour = self._parse_int(row.get("start_hour"), -1)
+            end_hour = self._parse_int(row.get("end_hour"), -1)
+            if start_hour < 0 or start_hour > 23 or end_hour < 1 or end_hour > 24 or start_hour >= end_hour:
+                raise ValueError("shift template must use valid start/end hours")
+
+            entry = (
+                db.query(RestaurantShiftTemplate)
+                .filter(
+                    RestaurantShiftTemplate.venue_id == venue.id,
+                    RestaurantShiftTemplate.template_name == template_name,
+                    RestaurantShiftTemplate.role == role,
+                )
+                .first()
+            )
+            if entry is None:
+                entry = RestaurantShiftTemplate(venue_id=venue.id, template_name=template_name, role=role)
+                db.add(entry)
+
+            entry.start_hour = start_hour
+            entry.end_hour = end_hour
+            entry.default_staff_count = max(1, self._parse_int(row.get("default_staff_count"), 1))
+            entry.target_covers = max(0, self._parse_int(row.get("target_covers"), 0))
+            entry.is_active = bool(row.get("is_active", True))
+            upserted += 1
+
+        db.commit()
+        templates_payload = self.get_shift_templates(db, venue.id, include_inactive=True)["templates"]
+        return {"status": "success", "venue_id": venue.id, "templates_upserted": upserted, "templates": templates_payload}
+
+    def get_shift_templates(self, db: Session, venue_id: Optional[str] = None, include_inactive: bool = False) -> dict:
+        venue = self._get_or_create_venue(db, venue_id)
+        query = db.query(RestaurantShiftTemplate).filter(RestaurantShiftTemplate.venue_id == venue.id)
+        if not include_inactive:
+            query = query.filter(RestaurantShiftTemplate.is_active.is_(True))
+        rows = query.order_by(RestaurantShiftTemplate.template_name.asc(), RestaurantShiftTemplate.role.asc()).all()
+        templates = [
+            {
+                "id": row.id,
+                "template_name": row.template_name,
+                "role": row.role,
+                "start_hour": row.start_hour,
+                "end_hour": row.end_hour,
+                "default_staff_count": row.default_staff_count,
+                "target_covers": row.target_covers,
+                "is_active": row.is_active,
+            }
+            for row in rows
+        ]
+        return {
+            "venue_id": venue.id,
+            "include_inactive": include_inactive,
+            "templates": templates,
+            "summary": {"template_count": len(templates)},
+        }
+
+    def create_purchase_order_from_auto_order(self, db: Session, date: str, venue_id: Optional[str] = None) -> dict:
+        venue = self._get_or_create_venue(db, venue_id)
+        draft = self.get_inventory_auto_order(db, date, venue.id)
+        lines = draft["purchase_order_draft"]["lines"]
+        if not lines:
+            raise ValueError("No purchase order lines generated from current stock levels")
+
+        supplier_counter: dict[str, int] = defaultdict(int)
+        for row in lines:
+            supplier_counter[row.get("supplier") or "Default Supplier"] += 1
+        top_supplier = sorted(supplier_counter.items(), key=lambda kv: kv[1], reverse=True)[0][0]
+        supplier = top_supplier if len(supplier_counter) == 1 else "Multiple suppliers"
+        total = self._parse_float(draft["purchase_order_draft"].get("total_estimated_cost"), 0.0)
+        status = "pending_approval" if total >= 500 else "approved"
+        now = datetime.now(timezone.utc)
+
+        po = RestaurantPurchaseOrder(
+            venue_id=venue.id,
+            order_date=self._normalize_date(date),
+            supplier=supplier,
+            status=status,
+            lines=lines,
+            total_estimated_cost=total,
+            approved_by="system-auto" if status == "approved" else None,
+            approved_at=now if status == "approved" else None,
+        )
+        db.add(po)
+        db.commit()
+        db.refresh(po)
+
+        return {
+            "status": "success",
+            "venue_id": venue.id,
+            "purchase_order": {
+                "id": po.id,
+                "order_date": po.order_date,
+                "supplier": po.supplier,
+                "status": po.status,
+                "total_estimated_cost": round(po.total_estimated_cost, 2),
+                "line_count": len(po.lines or []),
+                "lines": po.lines or [],
+            },
+        }
+
+    def update_purchase_order_approval(
+        self,
+        db: Session,
+        purchase_order_id: str,
+        action: str,
+        approver: Optional[str] = None,
+        comment: Optional[str] = None,
+    ) -> dict:
+        po = db.query(RestaurantPurchaseOrder).filter(RestaurantPurchaseOrder.id == purchase_order_id).first()
+        if po is None:
+            raise ValueError("Purchase order not found")
+
+        normalized = (action or "").strip().lower()
+        if normalized not in {"submit", "approve", "reject", "order", "reset"}:
+            raise ValueError("action must be one of: submit, approve, reject, order, reset")
+
+        if normalized == "submit":
+            po.status = "pending_approval"
+        elif normalized == "approve":
+            po.status = "approved"
+            po.approved_by = approver or "manager"
+            po.approved_at = datetime.now(timezone.utc)
+        elif normalized == "reject":
+            po.status = "rejected"
+        elif normalized == "order":
+            if po.status != "approved":
+                raise ValueError("Purchase order must be approved before ordering")
+            po.status = "ordered"
+        elif normalized == "reset":
+            po.status = "draft"
+
+        if comment is not None:
+            po.approval_comment = comment
+        db.commit()
+        db.refresh(po)
+        return {
+            "status": "success",
+            "purchase_order": {
+                "id": po.id,
+                "status": po.status,
+                "approved_by": po.approved_by,
+                "approved_at": po.approved_at.isoformat() if po.approved_at else None,
+                "approval_comment": po.approval_comment,
+            },
+        }
+
+    def upsert_campaign_outcome(self, db: Session, campaign: dict[str, Any], venue_id: Optional[str] = None) -> dict:
+        venue = self._get_or_create_venue(db, venue_id)
+        campaign_date = self._normalize_date(campaign.get("campaign_date") or "")
+        campaign_type = (campaign.get("campaign_type") or "").strip()
+        channel = (campaign.get("channel") or "").strip()
+        if not campaign_type or not channel:
+            raise ValueError("campaign_type and channel are required")
+
+        existing = (
+            db.query(RestaurantCampaignRun)
+            .filter(
+                RestaurantCampaignRun.venue_id == venue.id,
+                RestaurantCampaignRun.campaign_date == campaign_date,
+                RestaurantCampaignRun.campaign_type == campaign_type,
+                RestaurantCampaignRun.channel == channel,
+            )
+            .first()
+        )
+        if existing is None:
+            existing = RestaurantCampaignRun(
+                venue_id=venue.id,
+                campaign_date=campaign_date,
+                campaign_type=campaign_type,
+                channel=channel,
+            )
+            db.add(existing)
+
+        existing.target_segment = campaign.get("target_segment")
+        existing.sent_count = max(0, self._parse_int(campaign.get("sent_count"), 0))
+        existing.redeemed_count = max(0, self._parse_int(campaign.get("redeemed_count"), 0))
+        existing.revenue_generated = max(0.0, self._parse_float(campaign.get("revenue_generated"), 0.0))
+        existing.cost = max(0.0, self._parse_float(campaign.get("cost"), 0.0))
+        existing.status = (campaign.get("status") or "completed").strip()
+        existing.meta = campaign.get("meta") if isinstance(campaign.get("meta"), dict) else None
+
+        db.commit()
+        db.refresh(existing)
+        redemption_rate = (existing.redeemed_count / existing.sent_count * 100) if existing.sent_count > 0 else 0.0
+        roi_pct = ((existing.revenue_generated - existing.cost) / existing.cost * 100) if existing.cost > 0 else None
+        return {
+            "status": "success",
+            "venue_id": venue.id,
+            "campaign": {
+                "id": existing.id,
+                "campaign_date": existing.campaign_date,
+                "campaign_type": existing.campaign_type,
+                "channel": existing.channel,
+                "target_segment": existing.target_segment,
+                "sent_count": existing.sent_count,
+                "redeemed_count": existing.redeemed_count,
+                "redemption_rate_pct": round(redemption_rate, 2),
+                "revenue_generated": round(existing.revenue_generated, 2),
+                "cost": round(existing.cost, 2),
+                "roi_pct": round(roi_pct, 2) if roi_pct is not None else None,
+                "status": existing.status,
+            },
+        }
+
+    def get_campaign_performance(self, db: Session, start_date: str, end_date: str, venue_id: Optional[str] = None) -> dict:
+        venue = self._get_or_create_venue(db, venue_id)
+        dr = DateRange(self._normalize_date(start_date), self._normalize_date(end_date))
+        rows = (
+            db.query(RestaurantCampaignRun)
+            .filter(
+                RestaurantCampaignRun.venue_id == venue.id,
+                RestaurantCampaignRun.campaign_date >= dr.start,
+                RestaurantCampaignRun.campaign_date <= dr.end,
+            )
+            .order_by(RestaurantCampaignRun.campaign_date.asc())
+            .all()
+        )
+
+        campaigns = []
+        by_channel: dict[str, dict[str, float]] = defaultdict(lambda: {"sent": 0.0, "redeemed": 0.0, "revenue": 0.0, "cost": 0.0})
+        for row in rows:
+            redemption_rate = (row.redeemed_count / row.sent_count * 100) if row.sent_count > 0 else 0.0
+            roi_pct = ((row.revenue_generated - row.cost) / row.cost * 100) if row.cost > 0 else None
+            campaigns.append(
+                {
+                    "id": row.id,
+                    "campaign_date": row.campaign_date,
+                    "campaign_type": row.campaign_type,
+                    "channel": row.channel,
+                    "target_segment": row.target_segment,
+                    "status": row.status,
+                    "sent_count": row.sent_count,
+                    "redeemed_count": row.redeemed_count,
+                    "redemption_rate_pct": round(redemption_rate, 2),
+                    "revenue_generated": round(row.revenue_generated, 2),
+                    "cost": round(row.cost, 2),
+                    "roi_pct": round(roi_pct, 2) if roi_pct is not None else None,
+                }
+            )
+            channel_stats = by_channel[row.channel]
+            channel_stats["sent"] += row.sent_count
+            channel_stats["redeemed"] += row.redeemed_count
+            channel_stats["revenue"] += row.revenue_generated
+            channel_stats["cost"] += row.cost
+
+        total_sent = sum(c["sent_count"] for c in campaigns)
+        total_redeemed = sum(c["redeemed_count"] for c in campaigns)
+        total_revenue = sum(c["revenue_generated"] for c in campaigns)
+        total_cost = sum(c["cost"] for c in campaigns)
+        channels = []
+        for channel, stats in sorted(by_channel.items(), key=lambda kv: kv[1]["revenue"], reverse=True):
+            sent = stats["sent"]
+            redeemed = stats["redeemed"]
+            revenue = stats["revenue"]
+            cost = stats["cost"]
+            channels.append(
+                {
+                    "channel": channel,
+                    "sent_count": int(sent),
+                    "redeemed_count": int(redeemed),
+                    "redemption_rate_pct": round((redeemed / sent * 100) if sent > 0 else 0.0, 2),
+                    "revenue_generated": round(revenue, 2),
+                    "cost": round(cost, 2),
+                    "roi_pct": round(((revenue - cost) / cost * 100), 2) if cost > 0 else None,
+                }
+            )
+
+        return {
+            "date_range": {"from": dr.start, "to": dr.end},
+            "venue_id": venue.id,
+            "campaigns": campaigns,
+            "channels": channels,
+            "summary": {
+                "campaign_count": len(campaigns),
+                "sent_count": int(total_sent),
+                "redeemed_count": int(total_redeemed),
+                "redemption_rate_pct": round((total_redeemed / total_sent * 100) if total_sent > 0 else 0.0, 2),
+                "revenue_generated": round(total_revenue, 2),
+                "cost": round(total_cost, 2),
+                "roi_pct": round(((total_revenue - total_cost) / total_cost * 100), 2) if total_cost > 0 else None,
+            },
         }
 
     def get_observability_summary(self, db: Session, date: str, venue_id: Optional[str] = None) -> dict:

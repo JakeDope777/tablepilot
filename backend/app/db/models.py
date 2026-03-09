@@ -336,6 +336,9 @@ class RestaurantVenue(Base):
     anomalies = relationship("RestaurantAnomaly", back_populates="venue")
     recommendations = relationship("RestaurantRecommendation", back_populates="venue")
     ingestion_runs = relationship("RestaurantIngestionRun", back_populates="venue")
+    purchase_orders = relationship("RestaurantPurchaseOrder", back_populates="venue")
+    shift_templates = relationship("RestaurantShiftTemplate", back_populates="venue")
+    campaign_runs = relationship("RestaurantCampaignRun", back_populates="venue")
 
 
 class RestaurantSale(Base):
@@ -514,3 +517,73 @@ class RestaurantIngestionRun(Base):
     )
 
     venue = relationship("RestaurantVenue", back_populates="ingestion_runs")
+
+
+class RestaurantPurchaseOrder(Base):
+    __tablename__ = "restaurant_purchase_orders"
+
+    id = Column(String, primary_key=True, default=generate_uuid)
+    venue_id = Column(String, ForeignKey("restaurant_venues.id"), nullable=False, index=True)
+    order_date = Column(String, nullable=False, index=True)
+    supplier = Column(String, nullable=False, index=True)
+    status = Column(String, default="draft", nullable=False, index=True)
+    lines = Column(JSON, nullable=False)
+    total_estimated_cost = Column(Float, default=0.0, nullable=False)
+    approval_comment = Column(Text, nullable=True)
+    approved_by = Column(String, nullable=True)
+    approved_at = Column(DateTime, nullable=True)
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc), nullable=False)
+    updated_at = Column(
+        DateTime,
+        default=lambda: datetime.now(timezone.utc),
+        onupdate=lambda: datetime.now(timezone.utc),
+    )
+
+    venue = relationship("RestaurantVenue", back_populates="purchase_orders")
+
+
+class RestaurantShiftTemplate(Base):
+    __tablename__ = "restaurant_shift_templates"
+
+    id = Column(String, primary_key=True, default=generate_uuid)
+    venue_id = Column(String, ForeignKey("restaurant_venues.id"), nullable=False, index=True)
+    template_name = Column(String, nullable=False, index=True)
+    role = Column(String, nullable=False, index=True)
+    start_hour = Column(Integer, default=9, nullable=False)
+    end_hour = Column(Integer, default=17, nullable=False)
+    default_staff_count = Column(Integer, default=1, nullable=False)
+    target_covers = Column(Integer, default=0, nullable=False)
+    is_active = Column(Boolean, default=True, nullable=False, index=True)
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc), nullable=False)
+    updated_at = Column(
+        DateTime,
+        default=lambda: datetime.now(timezone.utc),
+        onupdate=lambda: datetime.now(timezone.utc),
+    )
+
+    venue = relationship("RestaurantVenue", back_populates="shift_templates")
+
+
+class RestaurantCampaignRun(Base):
+    __tablename__ = "restaurant_campaign_runs"
+
+    id = Column(String, primary_key=True, default=generate_uuid)
+    venue_id = Column(String, ForeignKey("restaurant_venues.id"), nullable=False, index=True)
+    campaign_date = Column(String, nullable=False, index=True)
+    campaign_type = Column(String, nullable=False, index=True)
+    channel = Column(String, nullable=False, index=True)
+    target_segment = Column(String, nullable=True)
+    sent_count = Column(Integer, default=0, nullable=False)
+    redeemed_count = Column(Integer, default=0, nullable=False)
+    revenue_generated = Column(Float, default=0.0, nullable=False)
+    cost = Column(Float, default=0.0, nullable=False)
+    status = Column(String, default="draft", nullable=False, index=True)
+    meta = Column(JSON, nullable=True)
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc), nullable=False)
+    updated_at = Column(
+        DateTime,
+        default=lambda: datetime.now(timezone.utc),
+        onupdate=lambda: datetime.now(timezone.utc),
+    )
+
+    venue = relationship("RestaurantVenue", back_populates="campaign_runs")

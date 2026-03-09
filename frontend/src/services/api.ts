@@ -108,6 +108,92 @@ export const chatService = {
   },
 };
 
+// ── Restaurant Ops ─────────────────────────────────────────
+
+export const restaurantService = {
+  async ingestCsv(
+    route: '/restaurant/ingest/pos-csv' | '/restaurant/ingest/purchases-csv' | '/restaurant/ingest/labor-csv' | '/restaurant/ingest/reviews-csv',
+    file: File,
+    venueId?: string,
+    idempotencyKey?: string,
+  ) {
+    const params = venueId ? { venue_id: venueId } : undefined;
+    const formData = new FormData();
+    formData.append('file', file);
+    const headers: Record<string, string> = {};
+    if (idempotencyKey) headers['Idempotency-Key'] = idempotencyKey;
+    const { data } = await api.post(route, formData, { params, headers });
+    return data as Record<string, unknown>;
+  },
+
+  async getControlTowerDaily(date: string, venueId?: string) {
+    const { data } = await api.get('/restaurant/control-tower/daily', { params: { date, venue_id: venueId } });
+    return data as Record<string, unknown>;
+  },
+
+  async getFinanceMargin(fromDate: string, toDate: string, venueId?: string, fixedCostPerDay?: number) {
+    const { data } = await api.get('/restaurant/finance/margin', {
+      params: { from: fromDate, to: toDate, venue_id: venueId, fixed_cost_per_day: fixedCostPerDay },
+    });
+    return data as Record<string, unknown>;
+  },
+
+  async getInventoryAlerts(date: string, venueId?: string) {
+    const { data } = await api.get('/restaurant/inventory/alerts', { params: { date, venue_id: venueId } });
+    return data as Record<string, unknown>;
+  },
+
+  async getDailyRecommendations(date: string, venueId?: string) {
+    const { data } = await api.get('/restaurant/recommendations/daily', { params: { date, venue_id: venueId } });
+    return data as Record<string, unknown>;
+  },
+
+  async getObservabilitySummary(date: string, venueId?: string) {
+    const { data } = await api.get('/restaurant/observability/summary', { params: { date, venue_id: venueId } });
+    return data as Record<string, unknown>;
+  },
+
+  async getMenuRepricing(fromDate: string, toDate: string, venueId?: string) {
+    const { data } = await api.get('/restaurant/menu/repricing', { params: { from: fromDate, to: toDate, venue_id: venueId } });
+    return data as Record<string, unknown>;
+  },
+
+  async runMenuPriceSimulator(payload: {
+    from_date: string;
+    to_date: string;
+    elasticity?: number;
+    venue_id?: string;
+    fixed_cost_per_day?: number;
+    adjustments?: Array<{ menu_item: string; price_change_pct: number }>;
+  }) {
+    const { data } = await api.post('/restaurant/menu/price-simulator', payload);
+    return data as Record<string, unknown>;
+  },
+
+  async getSupplierRisk(fromDate: string, toDate: string, venueId?: string) {
+    const { data } = await api.get('/restaurant/procurement/supplier-risk', { params: { from: fromDate, to: toDate, venue_id: venueId } });
+    return data as Record<string, unknown>;
+  },
+
+  async getInventoryAutoOrder(date: string, venueId?: string) {
+    const { data } = await api.get('/restaurant/inventory/auto-order', { params: { date, venue_id: venueId } });
+    return data as Record<string, unknown>;
+  },
+
+  async createPurchaseOrderDraft(date: string, venueId?: string) {
+    const { data } = await api.post('/restaurant/procurement/po-draft/from-auto-order', null, { params: { date, venue_id: venueId } });
+    return data as Record<string, unknown>;
+  },
+
+  async updatePurchaseOrderApproval(
+    purchaseOrderId: string,
+    payload: { action: 'submit' | 'approve' | 'reject' | 'order' | 'reset'; approver?: string; comment?: string },
+  ) {
+    const { data } = await api.post(`/restaurant/procurement/po/${purchaseOrderId}/approval`, payload);
+    return data as Record<string, unknown>;
+  },
+};
+
 // ── Dashboard / Analytics ───────────────────────────────────
 
 export const analyticsService = {
