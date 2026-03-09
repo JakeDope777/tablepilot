@@ -1,6 +1,15 @@
 import { useEffect, useMemo, useState } from 'react';
-import { AlertTriangle, Loader2, RefreshCw, ShieldCheck } from 'lucide-react';
+import { AlertTriangle, RefreshCw } from 'lucide-react';
 import { restaurantService } from '../services/api';
+import {
+  EmptyPanelMessage,
+  OpsKpiCard,
+  OpsPageHeader,
+  OpsPanel,
+  RecommendationCard,
+  severityClass,
+  severityLabel,
+} from '../components/ui/OpsPrimitives';
 
 interface KPIBlock {
   revenue: number;
@@ -23,6 +32,14 @@ interface ControlAnomaly {
   metric: number;
 }
 
+interface StockAlert {
+  category: string;
+  severity: string;
+  title: string;
+  why: string;
+  next_action: string;
+}
+
 interface ControlResponse {
   date: string;
   venue_id: string;
@@ -33,6 +50,7 @@ interface ControlResponse {
     sales_drop_alert_pct: number;
   };
   anomalies: ControlAnomaly[];
+  stock_alerts: StockAlert[];
 }
 
 interface Recommendation {
@@ -63,9 +81,17 @@ function todayIso(): string {
   return new Date().toISOString().slice(0, 10);
 }
 
-function metricColor(value: number, threshold: number, invert = false): string {
-  const isBad = invert ? value < threshold : value > threshold;
-  return isBad ? 'text-red-600' : 'text-emerald-700';
+function percentTone(value: number, target: number, invert = false): 'healthy' | 'warning' | 'critical' {
+  const bad = invert ? value < target : value > target;
+  if (!bad) return 'healthy';
+  const distance = Math.abs(value - target);
+  return distance > 6 ? 'critical' : 'warning';
+}
+
+function recommendationSeverity(rec: Recommendation): string {
+  if (rec.category === 'steady_state') return 'healthy';
+  if (['labor_optimization', 'sales_recovery', 'inventory_risk'].includes(rec.category)) return 'critical';
+  return 'warning';
 }
 
 export default function ControlTowerPage() {
@@ -85,14 +111,11 @@ export default function ControlTowerPage() {
         restaurantService.getDailyRecommendations(date),
         restaurantService.getObservabilitySummary(date),
       ]);
-      const controlData = controlRaw as unknown as ControlResponse;
-      const recData = recRaw as unknown as RecommendationsResponse;
-      const obsData = obsRaw as unknown as ObservabilityResponse;
-      setControl(controlData);
-      setRecommendations(recData.recommendations ?? []);
-      setObservability(obsData);
+      setControl(controlRaw as unknown as ControlResponse);
+      setRecommendations(((recRaw as unknown as RecommendationsResponse).recommendations ?? []).slice(0, 8));
+      setObservability(obsRaw as unknown as ObservabilityResponse);
     } catch {
-      setError('Failed to load control tower data. Ingest sample CSVs first.');
+      setError('Control Tower data is unavailable. Upload pilot CSV datasets and refresh.');
     } finally {
       setLoading(false);
     }
@@ -103,139 +126,159 @@ export default function ControlTowerPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const cards = useMemo(() => {
-    if (!control) return [];
-    const k = control.kpis;
-    return [
-      { label: 'Revenue', value: `€${k.revenue.toFixed(2)}` },
-      { label: 'Forecast', value: `€${k.forecast_revenue.toFixed(2)}` },
-      { label: 'Covers', value: `${k.covers}` },
-      { label: 'Avg Check', value: `€${k.avg_check.toFixed(2)}` },
-    ];
+  const revenueGap = useMemo(() => {
+    if (!control) return 0;
+    return control.kpis.revenue - control.kpis.forecast_revenue;
   }, [control]);
 
-  if (loading) {
+  if (loading && !control) {
     return (
-      <div className="flex min-h-[50vh] items-center justify-center">
-        <Loader2 className="h-8 w-8 animate-spin text-orange-500" />
+      <div className="flex min-h-[45vh] items-center justify-center">
+        <div className="h-10 w-10 rounded-full border-4 border-slate-300 border-t-slate-700 animate-spin" />
       </div>
     );
   }
 
   return (
     <div className="space-y-6">
-      <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          <div>
-            <p className="text-xs uppercase tracking-[0.18em] text-slate-500">Daily Control Tower</p>
-            <h2 className="text-xl font-bold text-slate-900">Service Command Snapshot</h2>
-          </div>
-          <div className="flex items-center gap-2">
-            <input
-              type="date"
-              value={date}
-              onChange={(e) => setDate(e.target.value)}
-              className="rounded-lg border border-slate-300 px-3 py-2 text-sm"
-            />
-            <button
-              onClick={() => void load()}
-              className="inline-flex items-center gap-2 rounded-lg border border-slate-300 px-3 py-2 text-sm hover:bg-slate-50"
-            >
-              <RefreshCw className="h-4 w-4" /> Refresh
-            </button>
-          </div>
-        </div>
-        {error && <p className="mt-3 text-sm text-red-600">{error}</p>}
-      </section>
+      <OpsPageHeader
+        eyebrow="Daily Control Tower"
+        title="Operator Briefing"
+        subtitle="Monitor service performance, margin pressure, and AI-prioritized next actions from one command view."
+      >
+        <input
+          type="date"
+          value={date}
+          onChange={(event) => setDate(event.target.value)}
+          className="rounded-lg border border-slate-300 px-3 py-2 text-sm"
+        />
+        <button
+          onClick={() => void load()}
+          className="inline-flex items-center gap-2 rounded-lg border border-slate-300 px-3 py-2 text-sm hover:bg-slate-50"
+        >
+          <RefreshCw className="h-4 w-4" /> Refresh
+        </button>
+      </OpsPageHeader>
+
+      {error && <p className="rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-700">{error}</p>}
 
       {control && (
         <>
-          <section className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-            {cards.map((card) => (
-              <article key={card.label} className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
-                <p className="text-xs uppercase tracking-wide text-slate-500">{card.label}</p>
-                <p className="mt-2 text-2xl font-bold text-slate-900">{card.value}</p>
-              </article>
-            ))}
+          <section className="grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
+            <OpsKpiCard label="Revenue Today" value={`€${control.kpis.revenue.toFixed(2)}`} helper={`Forecast €${control.kpis.forecast_revenue.toFixed(2)}`} tone="neutral" />
+            <OpsKpiCard
+              label="Revenue vs Forecast"
+              value={`${control.kpis.revenue_vs_forecast_pct.toFixed(1)}%`}
+              helper={`Gap €${revenueGap.toFixed(2)}`}
+              tone={percentTone(control.kpis.revenue_vs_forecast_pct, -control.targets.sales_drop_alert_pct, true)}
+            />
+            <OpsKpiCard label="Covers" value={`${control.kpis.covers}`} helper={`Avg check €${control.kpis.avg_check.toFixed(2)}`} />
+            <OpsKpiCard
+              label="Labor Cost %"
+              value={`${control.kpis.labor_cost_pct.toFixed(1)}%`}
+              helper={`Target ${control.targets.labor_target_pct.toFixed(1)}%`}
+              tone={percentTone(control.kpis.labor_cost_pct, control.targets.labor_target_pct)}
+            />
+            <OpsKpiCard
+              label="Food Cost %"
+              value={`${control.kpis.food_cost_pct.toFixed(1)}%`}
+              helper={`Target ${control.targets.food_target_pct.toFixed(1)}%`}
+              tone={percentTone(control.kpis.food_cost_pct, control.targets.food_target_pct)}
+            />
           </section>
 
-          <section className="grid gap-4 lg:grid-cols-3">
-            <article className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
-              <p className="text-xs uppercase tracking-wide text-slate-500">Labor Cost %</p>
-              <p className={`mt-2 text-2xl font-bold ${metricColor(control.kpis.labor_cost_pct, control.targets.labor_target_pct)}`}>
-                {control.kpis.labor_cost_pct.toFixed(1)}%
-              </p>
-              <p className="mt-1 text-xs text-slate-500">Target {control.targets.labor_target_pct.toFixed(1)}%</p>
-            </article>
-            <article className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
-              <p className="text-xs uppercase tracking-wide text-slate-500">Food Cost %</p>
-              <p className={`mt-2 text-2xl font-bold ${metricColor(control.kpis.food_cost_pct, control.targets.food_target_pct)}`}>
-                {control.kpis.food_cost_pct.toFixed(1)}%
-              </p>
-              <p className="mt-1 text-xs text-slate-500">Target {control.targets.food_target_pct.toFixed(1)}%</p>
-            </article>
-            <article className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
-              <p className="text-xs uppercase tracking-wide text-slate-500">Revenue vs Forecast</p>
-              <p className={`mt-2 text-2xl font-bold ${metricColor(control.kpis.revenue_vs_forecast_pct, -control.targets.sales_drop_alert_pct, true)}`}>
-                {control.kpis.revenue_vs_forecast_pct.toFixed(1)}%
-              </p>
-              <p className="mt-1 text-xs text-slate-500">Alert if below -{control.targets.sales_drop_alert_pct.toFixed(1)}%</p>
-            </article>
-          </section>
-
-          <section className="grid gap-4 lg:grid-cols-2">
-            <article className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
-              <div className="mb-3 flex items-center gap-2">
-                <AlertTriangle className="h-4 w-4 text-orange-600" />
-                <h3 className="font-semibold text-slate-900">Anomalies</h3>
-              </div>
+          <section className="grid gap-4 xl:grid-cols-[1.15fr_1fr]">
+            <OpsPanel title="Anomaly Stream" subtitle="Priority issues detected for this service date.">
               {control.anomalies.length === 0 ? (
-                <p className="text-sm text-slate-500">No anomalies detected.</p>
+                <EmptyPanelMessage message="No anomalies detected for this date." />
               ) : (
                 <div className="space-y-2">
-                  {control.anomalies.map((item, idx) => (
-                    <div key={`${item.title}-${idx}`} className="rounded-lg border border-orange-200 bg-orange-50 p-3">
-                      <p className="text-sm font-semibold text-slate-900">{item.title}</p>
-                      <p className="text-xs text-slate-600">{item.why}</p>
-                    </div>
+                  {control.anomalies.slice(0, 8).map((item, idx) => (
+                    <article key={`${item.title}-${idx}`} className="rounded-xl border border-slate-200 bg-slate-50 p-3">
+                      <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+                        <p className="text-sm font-semibold text-slate-900">{item.title}</p>
+                        <span className={severityClass(item.severity)}>{severityLabel(item.severity)}</span>
+                      </div>
+                      <p className="text-xs text-slate-700">{item.why}</p>
+                      <p className="mt-1 text-xs text-slate-500">Metric: {item.metric.toFixed(2)}</p>
+                    </article>
                   ))}
                 </div>
               )}
-            </article>
+            </OpsPanel>
 
-            <article className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
-              <div className="mb-3 flex items-center gap-2">
-                <ShieldCheck className="h-4 w-4 text-emerald-600" />
-                <h3 className="font-semibold text-slate-900">AI Recommendations</h3>
-              </div>
+            <OpsPanel title="Recommendation Queue" subtitle="Prescriptive actions generated for the owner and manager.">
               {recommendations.length === 0 ? (
-                <p className="text-sm text-slate-500">No recommendations yet.</p>
+                <EmptyPanelMessage message="No recommendation cards generated yet." />
               ) : (
                 <div className="space-y-2">
-                  {recommendations.map((item, idx) => (
-                    <div key={`${item.title}-${idx}`} className="rounded-lg border border-slate-200 p-3">
-                      <p className="text-sm font-semibold text-slate-900">{item.title}</p>
-                      <p className="mt-1 text-xs text-slate-600">{item.warning}</p>
-                      <p className="mt-1 text-xs text-slate-500">Why: {item.why}</p>
-                      <p className="mt-1 text-xs font-medium text-slate-700">Next: {item.next_action}</p>
-                    </div>
+                  {recommendations.map((rec, idx) => (
+                    <RecommendationCard
+                      key={`${rec.title}-${idx}`}
+                      title={rec.title}
+                      warning={rec.warning}
+                      why={rec.why}
+                      nextAction={rec.next_action}
+                      automatable={rec.automatable}
+                      severity={recommendationSeverity(rec)}
+                    />
                   ))}
                 </div>
               )}
-            </article>
+            </OpsPanel>
           </section>
 
-          {observability && (
-            <section className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
-              <p className="text-xs uppercase tracking-wide text-slate-500">Pilot Observability</p>
-              <div className="mt-2 grid gap-2 text-sm text-slate-700 sm:grid-cols-3">
-                <p>Status: <span className="font-semibold">{observability.status}</span></p>
-                <p>Ingestion runs (7d): <span className="font-semibold">{observability.ingestion_health.total_runs_7d}</span></p>
-                <p>Open recs today: <span className="font-semibold">{observability.operations_health.open_recommendations_today}</span></p>
-              </div>
-            </section>
-          )}
+          <section className="grid gap-4 xl:grid-cols-2">
+            <OpsPanel title="Inventory Signal Highlights" subtitle="Stock and usage anomalies impacting daily execution.">
+              {!control.stock_alerts?.length ? (
+                <EmptyPanelMessage message="No stock or usage alerts for this date." />
+              ) : (
+                <div className="space-y-2">
+                  {control.stock_alerts.slice(0, 6).map((alert, idx) => (
+                    <article key={`${alert.title}-${idx}`} className="rounded-xl border border-slate-200 bg-white p-3">
+                      <div className="mb-2 flex items-center justify-between gap-2">
+                        <p className="text-sm font-semibold text-slate-900">{alert.title}</p>
+                        <span className={severityClass(alert.severity)}>{severityLabel(alert.severity)}</span>
+                      </div>
+                      <p className="text-xs text-slate-700">{alert.why}</p>
+                      <p className="mt-1 text-xs font-medium text-slate-800">Next Action: {alert.next_action}</p>
+                    </article>
+                  ))}
+                </div>
+              )}
+            </OpsPanel>
+
+            <OpsPanel title="Operational Health" subtitle="Pilot observability and recommendation backlog.">
+              {observability ? (
+                <div className="grid gap-3 sm:grid-cols-3">
+                  <article className="tp-panel-muted">
+                    <p className="tp-kpi-label">Platform Status</p>
+                    <p className="tp-kpi-value text-slate-900">{observability.status}</p>
+                  </article>
+                  <article className="tp-panel-muted">
+                    <p className="tp-kpi-label">Ingestion Runs (7d)</p>
+                    <p className="tp-kpi-value text-slate-900">{observability.ingestion_health.total_runs_7d}</p>
+                  </article>
+                  <article className="tp-panel-muted">
+                    <p className="tp-kpi-label">Open Recs / High Anomalies</p>
+                    <p className="tp-kpi-value text-slate-900">
+                      {observability.operations_health.open_recommendations_today}/{observability.operations_health.high_anomalies_today}
+                    </p>
+                  </article>
+                </div>
+              ) : (
+                <EmptyPanelMessage message="Observability summary not available." />
+              )}
+            </OpsPanel>
+          </section>
         </>
+      )}
+
+      {!control && !error && (
+        <div className="tp-panel flex items-center gap-3 text-slate-600">
+          <AlertTriangle className="h-4 w-4" />
+          Upload POS, purchases, labor, and reviews CSV files to activate this view.
+        </div>
       )}
     </div>
   );

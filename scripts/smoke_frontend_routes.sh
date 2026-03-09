@@ -18,6 +18,10 @@ DEV_PID=$!
 sleep 8
 
 paths=(
+  "/"
+  "/login"
+  "/register"
+  "/app"
   "/app/control-tower"
   "/app/margin-brain"
   "/app/inventory-waste"

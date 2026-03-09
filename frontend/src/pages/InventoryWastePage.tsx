@@ -1,6 +1,13 @@
-import { ChangeEvent, useState } from 'react';
+import { ChangeEvent, useMemo, useState } from 'react';
 import { CheckCircle2, Loader2, RefreshCw, UploadCloud } from 'lucide-react';
 import { restaurantService } from '../services/api';
+import {
+  EmptyPanelMessage,
+  OpsKpiCard,
+  OpsPageHeader,
+  OpsPanel,
+  RecommendationCard,
+} from '../components/ui/OpsPrimitives';
 
 type CsvRoute =
   | '/restaurant/ingest/pos-csv'
@@ -64,6 +71,13 @@ interface PurchaseOrderResponse {
   };
 }
 
+const uploads = [
+  { key: 'pos', label: 'POS Sales', route: '/restaurant/ingest/pos-csv' as CsvRoute },
+  { key: 'purchases', label: 'Purchases', route: '/restaurant/ingest/purchases-csv' as CsvRoute },
+  { key: 'labor', label: 'Labor Shifts', route: '/restaurant/ingest/labor-csv' as CsvRoute },
+  { key: 'reviews', label: 'Reviews', route: '/restaurant/ingest/reviews-csv' as CsvRoute },
+] as const;
+
 function todayIso(): string {
   return new Date().toISOString().slice(0, 10);
 }
@@ -102,14 +116,11 @@ export default function InventoryWastePage() {
         restaurantService.getInventoryAutoOrder(date),
         restaurantService.getSupplierRisk(daysAgoIso(14), date),
       ]);
-      const inventoryData = inventoryRaw as unknown as InventoryResponse;
-      const autoOrderData = autoOrderRaw as unknown as AutoOrderResponse;
-      const supplierData = supplierRaw as unknown as SupplierRiskResponse;
-      setInventory(inventoryData);
-      setAutoOrder(autoOrderData);
-      setSupplierRisk(supplierData.suppliers ?? []);
+      setInventory(inventoryRaw as unknown as InventoryResponse);
+      setAutoOrder(autoOrderRaw as unknown as AutoOrderResponse);
+      setSupplierRisk((supplierRaw as unknown as SupplierRiskResponse).suppliers ?? []);
     } catch {
-      setError('Failed to load inventory data. Upload purchases/stock CSV first.');
+      setError('Inventory intelligence unavailable. Upload purchases/stock data and reload.');
     } finally {
       setLoading(false);
     }
@@ -131,7 +142,7 @@ export default function InventoryWastePage() {
       const skipped = Number(response.rows_skipped ?? 0);
       setUploadStatus((prev) => ({ ...prev, [label]: `Ingested ${rows} rows (skipped ${skipped})` }));
     } catch {
-      setError(`Upload failed for ${label} CSV.`);
+      setError(`Upload failed for ${label}. Validate headers and retry.`);
     } finally {
       setUploading(false);
     }
@@ -141,10 +152,9 @@ export default function InventoryWastePage() {
     setError('');
     try {
       const payload = await restaurantService.createPurchaseOrderDraft(date);
-      const data = payload as unknown as PurchaseOrderResponse;
-      setPurchaseOrder(data.purchase_order);
+      setPurchaseOrder((payload as unknown as PurchaseOrderResponse).purchase_order);
     } catch {
-      setError('Could not create purchase order draft. Ensure low-stock lines exist.');
+      setError('Unable to create purchase order draft. Verify auto-order lines exist.');
     }
   };
 
@@ -155,46 +165,78 @@ export default function InventoryWastePage() {
       const payload = await restaurantService.updatePurchaseOrderApproval(purchaseOrder.id, {
         action: 'approve',
         approver: 'manager@tablepilot.local',
-        comment: 'Approved in pilot workflow.',
+        comment: 'Approved from TablePilot pilot workflow.',
       });
       const status = String((payload.purchase_order as { status?: string })?.status ?? purchaseOrder.status);
       setPurchaseOrder((prev) => (prev ? { ...prev, status } : prev));
     } catch {
-      setError('Failed to approve purchase order.');
+      setError('PO approval update failed.');
     }
   };
 
+  const groupedAlerts = useMemo(() => {
+    const groups = {
+      low_stock: [] as InventoryAlert[],
+      usage_variance: [] as InventoryAlert[],
+      supplier_price: [] as InventoryAlert[],
+      other: [] as InventoryAlert[],
+    };
+
+    for (const alert of inventory?.alerts ?? []) {
+      if (alert.category === 'low_stock') groups.low_stock.push(alert);
+      else if (alert.category === 'usage_variance') groups.usage_variance.push(alert);
+      else if (alert.category === 'supplier_price') groups.supplier_price.push(alert);
+      else groups.other.push(alert);
+    }
+
+    return groups;
+  }, [inventory]);
+
+  const uploadedCount = useMemo(
+    () => Object.keys(uploadStatus).filter((label) => uploadStatus[label]).length,
+    [uploadStatus],
+  );
+
+  const canDraftPo = Boolean(autoOrder?.purchase_order_draft?.line_count && autoOrder.purchase_order_draft.line_count > 0);
+
   return (
     <div className="space-y-6">
-      <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
-        <div className="flex flex-wrap items-end justify-between gap-3">
-          <div>
-            <p className="text-xs uppercase tracking-[0.18em] text-slate-500">Inventory & Waste</p>
-            <h2 className="text-xl font-bold text-slate-900">Stock Risk and Procurement Console</h2>
-          </div>
-          <div className="flex items-center gap-2">
-            <input type="date" value={date} onChange={(e) => setDate(e.target.value)} className="rounded-lg border border-slate-300 px-3 py-2 text-sm" />
-            <button onClick={() => void load()} className="inline-flex items-center gap-2 rounded-lg border border-slate-300 px-3 py-2 text-sm hover:bg-slate-50">
-              <RefreshCw className="h-4 w-4" /> Load
-            </button>
-          </div>
-        </div>
-        {error && <p className="mt-3 text-sm text-red-600">{error}</p>}
+      <OpsPageHeader
+        eyebrow="Inventory & Waste"
+        title="Steward Console"
+        subtitle="Ingest operational files, monitor stock risk, and push procurement actions before margin leakage compounds."
+      >
+        <input type="date" value={date} onChange={(e) => setDate(e.target.value)} className="rounded-lg border border-slate-300 px-3 py-2 text-sm" />
+        <button onClick={() => void load()} className="inline-flex items-center gap-2 rounded-lg border border-slate-300 px-3 py-2 text-sm hover:bg-slate-50">
+          <RefreshCw className="h-4 w-4" /> Refresh Intelligence
+        </button>
+      </OpsPageHeader>
+
+      {error && <p className="rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-700">{error}</p>}
+
+      <section className="grid gap-3 lg:grid-cols-3">
+        <OpsPanel title="Step 1" subtitle="Upload pilot datasets">
+          <p className="text-sm text-slate-700">{uploadedCount}/4 datasets uploaded this session.</p>
+        </OpsPanel>
+        <OpsPanel title="Step 2" subtitle="Refresh inventory intelligence">
+          <p className="text-sm text-slate-700">Pull alerts, auto-order guidance, and supplier risk for the selected date.</p>
+        </OpsPanel>
+        <OpsPanel title="Step 3" subtitle="Execute procurement action">
+          <p className="text-sm text-slate-700">Create and approve PO draft when low-stock risk is confirmed.</p>
+        </OpsPanel>
       </section>
 
-      <section className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
-        <h3 className="font-semibold text-slate-900">CSV Uploads</h3>
-        <p className="mt-1 text-xs text-slate-500">Upload pilot datasets and refresh the panel.</p>
-        <div className="mt-3 grid gap-3 md:grid-cols-2 lg:grid-cols-4">
-          {[
-            { key: 'pos', label: 'POS Sales', route: '/restaurant/ingest/pos-csv' as CsvRoute },
-            { key: 'purchases', label: 'Purchases', route: '/restaurant/ingest/purchases-csv' as CsvRoute },
-            { key: 'labor', label: 'Labor Shifts', route: '/restaurant/ingest/labor-csv' as CsvRoute },
-            { key: 'reviews', label: 'Reviews', route: '/restaurant/ingest/reviews-csv' as CsvRoute },
-          ].map((item) => (
-            <div key={item.key} className="rounded-lg border border-slate-200 p-3">
-              <p className="text-sm font-medium text-slate-900">{item.label}</p>
-              <input type="file" accept=".csv,text/csv" onChange={onFileChange(item.key as 'pos' | 'purchases' | 'labor' | 'reviews')} className="mt-2 block w-full text-xs text-slate-600" />
+      <OpsPanel title="CSV Ingestion Workflow" subtitle="Use standardized templates for reliable ingestion and anomaly detection.">
+        <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+          {uploads.map((item) => (
+            <article key={item.key} className="tp-panel-muted">
+              <p className="text-sm font-semibold text-slate-900">{item.label}</p>
+              <input
+                type="file"
+                accept=".csv,text/csv"
+                onChange={onFileChange(item.key as 'pos' | 'purchases' | 'labor' | 'reviews')}
+                className="mt-2 block w-full text-xs text-slate-600"
+              />
               <button
                 onClick={() => void uploadDataset(item.label, item.route, files[item.key as keyof typeof files])}
                 disabled={uploading || !files[item.key as keyof typeof files]}
@@ -202,11 +244,15 @@ export default function InventoryWastePage() {
               >
                 <UploadCloud className="h-3.5 w-3.5" /> Upload
               </button>
-              {uploadStatus[item.label] && <p className="mt-2 text-xs text-emerald-700">{uploadStatus[item.label]}</p>}
-            </div>
+              {uploadStatus[item.label] ? (
+                <p className="mt-2 text-xs text-emerald-700">{uploadStatus[item.label]}</p>
+              ) : (
+                <p className="mt-2 text-xs text-slate-500">Awaiting upload</p>
+              )}
+            </article>
           ))}
         </div>
-      </section>
+      </OpsPanel>
 
       {loading ? (
         <div className="flex min-h-[25vh] items-center justify-center">
@@ -215,96 +261,126 @@ export default function InventoryWastePage() {
       ) : (
         <>
           {inventory && (
-            <section className="grid gap-4 lg:grid-cols-3">
-              <article className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
-                <p className="text-xs uppercase tracking-wide text-slate-500">Alerts</p>
-                <p className="mt-2 text-2xl font-bold text-slate-900">{inventory.summary.alert_count}</p>
-              </article>
-              <article className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
-                <p className="text-xs uppercase tracking-wide text-slate-500">Estimated Waste Qty</p>
-                <p className="mt-2 text-2xl font-bold text-slate-900">{inventory.summary.estimated_waste_qty.toFixed(2)}</p>
-              </article>
-              <article className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
-                <p className="text-xs uppercase tracking-wide text-slate-500">Estimated Waste Cost</p>
-                <p className="mt-2 text-2xl font-bold text-red-600">€{inventory.summary.estimated_waste_cost.toFixed(2)}</p>
-              </article>
+            <section className="grid gap-3 sm:grid-cols-3">
+              <OpsKpiCard label="Active Alerts" value={`${inventory.summary.alert_count}`} helper="Open inventory anomalies" tone={inventory.summary.alert_count > 4 ? 'critical' : 'warning'} />
+              <OpsKpiCard label="Estimated Waste Qty" value={`${inventory.summary.estimated_waste_qty.toFixed(2)}`} helper="Units at risk" tone={inventory.summary.estimated_waste_qty > 15 ? 'warning' : 'healthy'} />
+              <OpsKpiCard label="Estimated Waste Cost" value={`€${inventory.summary.estimated_waste_cost.toFixed(2)}`} helper="Projected leakage" tone={inventory.summary.estimated_waste_cost > 300 ? 'critical' : 'warning'} />
             </section>
           )}
 
-          <section className="grid gap-4 lg:grid-cols-2">
-            <article className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
-              <h3 className="font-semibold text-slate-900">Inventory Alerts</h3>
-              <div className="mt-3 space-y-2">
-                {inventory?.alerts.length ? (
-                  inventory.alerts.slice(0, 8).map((alert, idx) => (
-                    <div key={`${alert.title}-${idx}`} className="rounded-lg border border-slate-200 p-3 text-sm">
-                      <p className="font-semibold text-slate-900">{alert.title}</p>
-                      <p className="text-xs text-slate-600">{alert.why}</p>
-                      <p className="mt-1 text-xs font-medium text-slate-700">Next: {alert.next_action}</p>
-                    </div>
-                  ))
-                ) : (
-                  <p className="text-sm text-slate-500">No active alerts loaded for this date.</p>
-                )}
-              </div>
-            </article>
+          <section className="grid gap-4 xl:grid-cols-2">
+            <OpsPanel title="Low-Stock Alerts" subtitle="Items likely to stock out before next replenishment.">
+              {groupedAlerts.low_stock.length === 0 ? (
+                <EmptyPanelMessage message="No low-stock alerts detected." />
+              ) : (
+                <div className="space-y-2">
+                  {groupedAlerts.low_stock.map((alert, idx) => (
+                    <RecommendationCard
+                      key={`${alert.title}-stock-${idx}`}
+                      title={alert.title}
+                      warning={alert.why}
+                      why="Current on-hand inventory is below forecasted usage for the service window."
+                      nextAction={alert.next_action}
+                      automatable={true}
+                      severity={alert.severity}
+                    />
+                  ))}
+                </div>
+              )}
+            </OpsPanel>
 
-            <article className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
-              <h3 className="font-semibold text-slate-900">Auto-Order Draft</h3>
+            <OpsPanel title="Usage & Waste Variance" subtitle="Theoretical vs actual consumption mismatches.">
+              {groupedAlerts.usage_variance.length === 0 ? (
+                <EmptyPanelMessage message="No usage variance alerts detected." />
+              ) : (
+                <div className="space-y-2">
+                  {groupedAlerts.usage_variance.map((alert, idx) => (
+                    <RecommendationCard
+                      key={`${alert.title}-variance-${idx}`}
+                      title={alert.title}
+                      warning={alert.why}
+                      why="Actual prep/portion behavior is diverging from recipe expectations."
+                      nextAction={alert.next_action}
+                      automatable={false}
+                      severity={alert.severity}
+                    />
+                  ))}
+                </div>
+              )}
+            </OpsPanel>
+          </section>
+
+          <section className="grid gap-4 xl:grid-cols-2">
+            <OpsPanel title="Procurement Actions" subtitle="Auto-order draft and approval workflow.">
               {autoOrder ? (
-                <>
-                  <p className="mt-2 text-sm text-slate-700">
-                    {autoOrder.purchase_order_draft.line_count} lines · €{autoOrder.purchase_order_draft.total_estimated_cost.toFixed(2)}
-                  </p>
-                  <div className="mt-2 space-y-2">
+                <div className="space-y-3">
+                  <article className="tp-panel-muted">
+                    <p className="tp-kpi-label">Draft Summary</p>
+                    <p className="tp-kpi-value text-slate-900">
+                      {autoOrder.purchase_order_draft.line_count} lines · €{autoOrder.purchase_order_draft.total_estimated_cost.toFixed(2)}
+                    </p>
+                  </article>
+                  <div className="space-y-2">
                     {autoOrder.purchase_order_draft.lines.slice(0, 6).map((line) => (
-                      <div key={`${line.item_name}-${line.supplier}`} className="rounded-lg border border-slate-200 p-3 text-sm">
+                      <article key={`${line.item_name}-${line.supplier}`} className="rounded-xl border border-slate-200 bg-white p-3 text-sm">
                         <p className="font-semibold text-slate-900">{line.item_name}</p>
-                        <p className="text-xs text-slate-600">
+                        <p className="mt-1 text-xs text-slate-600">
                           {line.supplier} · Qty {line.order_qty.toFixed(2)} · €{line.line_total.toFixed(2)}
                         </p>
-                      </div>
+                        <p className="mt-1 text-xs text-slate-500">{line.why}</p>
+                      </article>
                     ))}
                   </div>
-                  <div className="mt-3 flex flex-wrap gap-2">
-                    <button onClick={() => void createPoDraft()} className="rounded-lg bg-slate-900 px-3 py-2 text-xs text-white hover:bg-slate-800">
+
+                  <div className="flex flex-wrap gap-2">
+                    <button
+                      onClick={() => void createPoDraft()}
+                      disabled={!canDraftPo}
+                      className="rounded-lg bg-slate-900 px-3 py-2 text-xs text-white hover:bg-slate-800 disabled:opacity-60"
+                    >
                       Create PO Draft
                     </button>
                     {purchaseOrder && purchaseOrder.status !== 'approved' && purchaseOrder.status !== 'ordered' && (
-                      <button onClick={() => void approvePo()} className="inline-flex items-center gap-1 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs text-emerald-700 hover:bg-emerald-100">
-                        <CheckCircle2 className="h-3.5 w-3.5" /> Approve
+                      <button
+                        onClick={() => void approvePo()}
+                        className="inline-flex items-center gap-1 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs text-emerald-700 hover:bg-emerald-100"
+                      >
+                        <CheckCircle2 className="h-3.5 w-3.5" /> Approve PO
                       </button>
                     )}
                   </div>
+
                   {purchaseOrder && (
-                    <p className="mt-2 text-xs text-slate-600">
-                      PO {purchaseOrder.id.slice(0, 8)} · Status <span className="font-semibold">{purchaseOrder.status}</span>
+                    <p className="text-xs text-slate-600">
+                      Purchase Order {purchaseOrder.id.slice(0, 8)} · status <span className="font-semibold">{purchaseOrder.status}</span>
                     </p>
                   )}
-                </>
+                </div>
               ) : (
-                <p className="mt-2 text-sm text-slate-500">Load data to generate auto-order suggestions.</p>
+                <EmptyPanelMessage message="Refresh intelligence to generate auto-order draft suggestions." />
               )}
-            </article>
-          </section>
+            </OpsPanel>
 
-          <section className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
-            <h3 className="font-semibold text-slate-900">Supplier Risk</h3>
-            <div className="mt-3 space-y-2">
+            <OpsPanel title="Supplier Price Risk" subtitle="Suppliers ranked by risk score and spend exposure.">
               {supplierRisk.length === 0 ? (
-                <p className="text-sm text-slate-500">No supplier risk records in range.</p>
+                <EmptyPanelMessage message="No supplier risk records in selected range." />
               ) : (
-                supplierRisk.slice(0, 6).map((row) => (
-                  <div key={row.supplier} className="rounded-lg border border-slate-200 p-3 text-sm">
-                    <p className="font-semibold text-slate-900">{row.supplier}</p>
-                    <p className="text-xs text-slate-600">
-                      Risk {row.risk_band} ({row.risk_score.toFixed(1)}) · Spend €{row.spend.toFixed(2)}
-                    </p>
-                    <p className="mt-1 text-xs text-slate-500">{row.next_action}</p>
-                  </div>
-                ))
+                <div className="space-y-2">
+                  {supplierRisk.slice(0, 8).map((row) => (
+                    <article key={row.supplier} className="rounded-xl border border-slate-200 bg-white p-3 text-sm">
+                      <div className="flex flex-wrap items-center justify-between gap-2">
+                        <p className="font-semibold text-slate-900">{row.supplier}</p>
+                        <span className={row.risk_score >= 70 ? 'tp-badge tp-badge-critical' : row.risk_score >= 45 ? 'tp-badge tp-badge-warning' : 'tp-badge tp-badge-healthy'}>
+                          {row.risk_band} ({row.risk_score.toFixed(0)})
+                        </span>
+                      </div>
+                      <p className="mt-1 text-xs text-slate-600">Spend €{row.spend.toFixed(2)}</p>
+                      <p className="mt-1 text-xs text-slate-700">Next Action: {row.next_action}</p>
+                    </article>
+                  ))}
+                </div>
               )}
-            </div>
+            </OpsPanel>
           </section>
         </>
       )}

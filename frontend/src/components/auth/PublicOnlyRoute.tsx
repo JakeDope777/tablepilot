@@ -13,7 +13,7 @@ export default function PublicOnlyRoute() {
   }
 
   if (isAuthenticated) {
-    return <Navigate to="/app/dashboard" replace />;
+    return <Navigate to="/app/control-tower" replace />;
   }
 
   return <Outlet />;

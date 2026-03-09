@@ -6,64 +6,80 @@
   <title>TablePilot Pilot Demo</title>
   <style>
     :root {
-      --bg: #0f172a;
-      --panel: #111827;
-      --panel-soft: #1f2937;
-      --text: #e5e7eb;
-      --muted: #94a3b8;
-      --accent: #f97316;
-      --good: #10b981;
-      --warn: #f59e0b;
+      --bg: #f8f6f1;
+      --panel: #ffffff;
+      --panel-soft: #f4f1ea;
+      --text: #1f2937;
+      --muted: #6b7280;
+      --accent: #c46a17;
+      --critical: #b42318;
+      --warning: #b54708;
+      --good: #067647;
+      --border: #e6ded1;
     }
     * { box-sizing: border-box; }
     body {
       margin: 0;
-      font-family: 'Segoe UI', system-ui, sans-serif;
-      background: radial-gradient(circle at top right, #1e293b 0, var(--bg) 45%);
+      font-family: "Space Grotesk", "Segoe UI", system-ui, sans-serif;
       color: var(--text);
+      background: radial-gradient(circle at top right, #f4e6d0 0, var(--bg) 40%);
     }
-    .wrap { max-width: 1100px; margin: 0 auto; padding: 28px 20px 48px; }
+    .wrap { max-width: 1120px; margin: 0 auto; padding: 28px 20px 48px; }
     .hero {
-      border: 1px solid #334155;
-      border-radius: 16px;
+      border: 1px solid var(--border);
+      border-radius: 18px;
       padding: 24px;
-      background: linear-gradient(160deg, #111827, #0b1220);
-      margin-bottom: 18px;
+      background: var(--panel);
+      box-shadow: 0 16px 30px rgba(180, 124, 30, 0.08);
+      margin-bottom: 16px;
     }
     .eyebrow { color: var(--accent); text-transform: uppercase; letter-spacing: .18em; font-size: 11px; font-weight: 700; }
     .hero h1 { margin: 10px 0 8px; font-size: 40px; }
-    .hero p { margin: 0; color: var(--muted); max-width: 760px; }
+    .hero p { margin: 0; color: var(--muted); max-width: 780px; line-height: 1.55; }
     .grid { display: grid; gap: 12px; }
-    .kpi-grid { grid-template-columns: repeat(4, 1fr); margin-bottom: 12px; }
+    .kpi-grid { grid-template-columns: repeat(5, 1fr); margin-bottom: 12px; }
     .card {
       background: var(--panel);
-      border: 1px solid #334155;
+      border: 1px solid var(--border);
       border-radius: 12px;
       padding: 14px;
     }
-    .label { color: var(--muted); font-size: 11px; text-transform: uppercase; letter-spacing: .12em; }
-    .value { margin-top: 6px; font-size: 28px; font-weight: 800; }
+    .label { color: var(--muted); font-size: 11px; text-transform: uppercase; letter-spacing: .13em; font-weight: 700; }
+    .value { margin-top: 6px; font-size: 27px; font-weight: 800; }
     .value.good { color: var(--good); }
-    .value.warn { color: var(--warn); }
+    .value.warn { color: var(--warning); }
+    .value.critical { color: var(--critical); }
     .columns { grid-template-columns: 1.1fr 1fr; }
     .list { display: grid; gap: 10px; margin-top: 10px; }
     .item {
-      border: 1px solid #374151;
+      border: 1px solid var(--border);
       background: var(--panel-soft);
       border-radius: 10px;
       padding: 10px;
     }
-    .item h4 { margin: 0 0 4px; font-size: 14px; }
-    .item p { margin: 0; color: #cbd5e1; font-size: 12px; line-height: 1.45; }
-    .pill { display: inline-block; margin-top: 6px; font-size: 11px; color: #fdba74; }
+    .item h4 { margin: 0 0 5px; font-size: 14px; }
+    .item p { margin: 0; color: #374151; font-size: 12px; line-height: 1.45; }
+    .pill {
+      display: inline-block;
+      margin-top: 7px;
+      font-size: 10px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: .08em;
+      border-radius: 999px;
+      padding: 4px 8px;
+      background: #fff;
+      border: 1px solid #d8d0c2;
+      color: #5b6475;
+    }
     .chat {
       margin-top: 14px;
-      border: 1px solid #334155;
+      border: 1px solid var(--border);
       border-radius: 12px;
       overflow: hidden;
-      background: #0b1220;
+      background: #fff;
     }
-    .chat-row { padding: 12px 14px; border-top: 1px solid #1f2937; }
+    .chat-row { padding: 12px 14px; border-top: 1px solid var(--border); }
     .chat-row:first-child { border-top: none; }
     .role { font-size: 11px; text-transform: uppercase; letter-spacing: .12em; color: var(--muted); margin-bottom: 6px; }
     .msg { font-size: 13px; line-height: 1.55; }
@@ -79,55 +95,60 @@
   <main class="wrap">
     <section class="hero">
       <div class="eyebrow">TablePilot · Pilot Alpha</div>
-      <h1>Restaurant Command Center Demo</h1>
-      <p>Single-venue walkthrough from CSV ingest to operator action. This demo focuses on daily control, margin pressure, waste alerts, and AI manager guidance.</p>
+      <h1>AI Operating Partner for Restaurants</h1>
+      <p>Single-venue storyline: CSV ingest, control tower health, margin intelligence, inventory risk detection, and manager chat recommendations with clear what/why/next action outputs.</p>
     </section>
 
     <section class="grid kpi-grid">
       <article class="card"><div class="label">Revenue Today</div><div class="value">€3,420</div></article>
       <article class="card"><div class="label">vs Forecast</div><div class="value warn">-11.8%</div></article>
-      <article class="card"><div class="label">Labor Cost %</div><div class="value warn">34.7%</div></article>
+      <article class="card"><div class="label">Labor %</div><div class="value critical">34.7%</div></article>
+      <article class="card"><div class="label">Food Cost %</div><div class="value warn">32.1%</div></article>
       <article class="card"><div class="label">Gross Margin %</div><div class="value good">63.2%</div></article>
     </section>
 
     <section class="grid columns">
       <article class="card">
-        <div class="label">Anomalies (What / Why / Next Action)</div>
+        <div class="label">Anomaly Queue (What / Why / Next Action)</div>
         <div class="list">
           <div class="item">
             <h4>Lunch sales below normal Tuesday baseline</h4>
             <p><strong>Why:</strong> covers dropped while average check stayed flat; likely traffic shortfall.</p>
             <p><strong>Next action:</strong> launch same-day lunch combo promo and shift one FOH role to dinner.</p>
+            <span class="pill">Critical</span>
           </div>
           <div class="item">
             <h4>Salmon usage variance +18%</h4>
             <p><strong>Why:</strong> actual prep exceeds theoretical recipe usage.</p>
-            <p><strong>Next action:</strong> run portioning check before evening service and retrain station for plating consistency.</p>
+            <p><strong>Next action:</strong> run portioning check before evening service and retrain station plating.</p>
+            <span class="pill">Warning</span>
           </div>
           <div class="item">
             <h4>Supplier chicken price up 9% in 3 weeks</h4>
             <p><strong>Why:</strong> latest invoices indicate sustained unit cost increase.</p>
-            <p><strong>Next action:</strong> shift 20% volume to alternate supplier and renegotiate contract threshold.</p>
+            <p><strong>Next action:</strong> shift 20% volume to alternate supplier and renegotiate terms.</p>
+            <span class="pill">Warning</span>
           </div>
         </div>
       </article>
 
       <article class="card">
-        <div class="label">Margin + Inventory Insights</div>
+        <div class="label">Margin + Procurement Actions</div>
         <div class="list">
           <div class="item">
             <h4>Low-margin dish: Burger Combo (37.4%)</h4>
             <p>High volume but weak contribution margin versus chicken plate.</p>
-            <span class="pill">Recommendation: +4% price test for 7 days</span>
+            <span class="pill">Action: +4% price test for 7 days</span>
           </div>
           <div class="item">
             <h4>Auto-order Draft</h4>
             <p>7 lines generated · estimated PO cost €612 · status: pending approval.</p>
-            <span class="pill">Action: approve PO and push to supplier workflow</span>
+            <span class="pill">Action: approve PO and send supplier order</span>
           </div>
           <div class="item">
             <h4>Waste risk projection</h4>
-            <p>Estimated unmanaged spoilage this month: €420 if current handling remains unchanged.</p>
+            <p>Estimated unmanaged spoilage this month: €420 if handling remains unchanged.</p>
+            <span class="pill">Automatable alert</span>
           </div>
         </div>
       </article>
@@ -140,11 +161,11 @@
       </div>
       <div class="chat-row">
         <div class="role">Manager Chat · TablePilot</div>
-        <div class="msg">Profit weakened due to labor at 34.7% (target 30%) and food usage variance in salmon prep. For tomorrow, prioritize chicken, tomatoes, and bread reorder; approve the auto-order draft and reduce one low-demand lunch FOH block.</div>
+        <div class="msg"><strong>What:</strong> Profit weakened due to labor at 34.7% and salmon usage variance.<br/><strong>Why:</strong> Staffing stayed above demand while prep control drifted on high-cost protein.<br/><strong>Next action:</strong> Approve tomorrow's PO draft, add salmon portion check, and reduce one low-demand lunch FOH block.</div>
       </div>
     </section>
 
-    <p class="footer">Demo storyline: CSV ingest → control tower KPIs → anomaly detection → recommendation cards → manager chat action plan.</p>
+    <p class="footer">Demo flow: CSV ingest → control tower → anomaly/recommendation cards → margin/inventory actions → manager chat.</p>
   </main>
 </body>
 </html>

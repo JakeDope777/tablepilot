@@ -4,59 +4,162 @@
 @tailwind components;
 @tailwind utilities;
 
+:root {
+  --tp-bg: #f8f7f4;
+  --tp-surface: #ffffff;
+  --tp-surface-muted: #f6f4ef;
+  --tp-border: #e6e1d7;
+  --tp-text: #1f2937;
+  --tp-muted: #6b7280;
+  --tp-accent: #c56b18;
+  --tp-critical-bg: #fef2f2;
+  --tp-critical-text: #b42318;
+  --tp-warning-bg: #fffbeb;
+  --tp-warning-text: #b54708;
+  --tp-notice-bg: #eff6ff;
+  --tp-notice-text: #1d4ed8;
+  --tp-healthy-bg: #ecfdf3;
+  --tp-healthy-text: #067647;
+}
+
 @layer base {
   body {
-    @apply bg-slate-50 text-slate-900 antialiased;
+    @apply antialiased;
+    background: radial-gradient(circle at top right, #f4e7d3 0, var(--tp-bg) 36%);
+    color: var(--tp-text);
     font-family: 'Space Grotesk', system-ui, -apple-system, sans-serif;
   }
 }
 
 @layer components {
   .btn-primary {
-    @apply bg-slate-900 text-white px-4 py-2 rounded-lg font-medium
-           hover:bg-slate-800 transition-colors duration-200
+    @apply rounded-lg px-4 py-2 font-medium text-white transition-colors duration-200
            focus:outline-none focus:ring-2 focus:ring-slate-700 focus:ring-offset-2
-           disabled:opacity-50 disabled:cursor-not-allowed;
+           disabled:cursor-not-allowed disabled:opacity-50;
+    background-color: #111827;
+  }
+
+  .btn-primary:hover {
+    background-color: #0f172a;
   }
 
   .btn-secondary {
-    @apply bg-white text-slate-700 px-4 py-2 rounded-lg font-medium
-           border border-slate-300 hover:bg-slate-50 transition-colors duration-200
+    @apply rounded-lg border px-4 py-2 font-medium transition-colors duration-200
            focus:outline-none focus:ring-2 focus:ring-slate-700 focus:ring-offset-2;
+    border-color: var(--tp-border);
+    color: #334155;
+    background: var(--tp-surface);
+  }
+
+  .btn-secondary:hover {
+    background: #fafaf9;
   }
 
   .card {
-    @apply bg-white rounded-xl shadow-sm border border-slate-200 p-6;
+    @apply rounded-xl border p-6 shadow-sm;
+    border-color: var(--tp-border);
+    background: var(--tp-surface);
   }
 
   .input-field {
-    @apply w-full px-4 py-2 border border-slate-300 rounded-lg
-           focus:outline-none focus:ring-2 focus:ring-orange-500 focus:border-transparent
-           placeholder-slate-400;
+    @apply w-full rounded-lg border px-4 py-2 placeholder-slate-400
+           focus:outline-none focus:ring-2 focus:ring-orange-500 focus:border-transparent;
+    border-color: #d1d5db;
+  }
+
+  .tp-panel {
+    @apply rounded-2xl border p-5 shadow-sm;
+    border-color: var(--tp-border);
+    background: var(--tp-surface);
+  }
+
+  .tp-panel-muted {
+    @apply rounded-2xl border p-4;
+    border-color: var(--tp-border);
+    background: var(--tp-surface-muted);
+  }
+
+  .tp-eyebrow {
+    @apply text-[11px] font-semibold uppercase tracking-[0.2em];
+    color: var(--tp-accent);
+  }
+
+  .tp-title {
+    @apply mt-1 text-xl font-bold text-slate-900;
+  }
+
+  .tp-subtitle {
+    @apply mt-1 text-sm leading-6;
+    color: var(--tp-muted);
+  }
+
+  .tp-kpi-label {
+    @apply text-[11px] font-semibold uppercase tracking-[0.16em];
+    color: var(--tp-muted);
+  }
+
+  .tp-kpi-value {
+    @apply mt-2 text-2xl font-bold text-slate-900;
+  }
+
+  .tp-kpi-helper {
+    @apply mt-1 text-xs;
+    color: var(--tp-muted);
+  }
+
+  .tp-badge {
+    @apply inline-flex items-center rounded-full px-2.5 py-1 text-[11px] font-semibold uppercase tracking-[0.08em];
+  }
+
+  .tp-badge-critical {
+    background: var(--tp-critical-bg);
+    color: var(--tp-critical-text);
+  }
+
+  .tp-badge-warning {
+    background: var(--tp-warning-bg);
+    color: var(--tp-warning-text);
+  }
+
+  .tp-badge-notice {
+    background: var(--tp-notice-bg);
+    color: var(--tp-notice-text);
+  }
+
+  .tp-badge-healthy {
+    background: var(--tp-healthy-bg);
+    color: var(--tp-healthy-text);
   }
 }
 
-/* Chat message animation */
 @keyframes fadeIn {
-  from { opacity: 0; transform: translateY(8px); }
-  to   { opacity: 1; transform: translateY(0); }
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
 }
 
 .chat-message-enter {
   animation: fadeIn 0.3s ease-out;
 }
 
-/* Scrollbar styling */
 ::-webkit-scrollbar {
   width: 6px;
 }
+
 ::-webkit-scrollbar-track {
   background: transparent;
 }
+
 ::-webkit-scrollbar-thumb {
   background: #cbd5e1;
   border-radius: 3px;
 }
+
 ::-webkit-scrollbar-thumb:hover {
   background: #64748b;
 }

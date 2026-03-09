@@ -1,7 +1,7 @@
 import { Navigate, Outlet, useLocation } from 'react-router-dom';
 import { useAuth } from '../../context/AuthContext';
 
-/** Pass ?demo=1 in any URL (or "Open Dashboard Free" CTA) to
+/** Pass ?demo=1 in any URL (or "Open App Demo" CTA) to
  *  skip auth checks and explore all pages with demo fallback data. */
 function isDemoMode(): boolean {
   if (typeof window === 'undefined') return false;

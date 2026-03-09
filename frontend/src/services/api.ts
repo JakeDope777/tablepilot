@@ -1,13 +1,5 @@
 import axios from 'axios';
-import type {
-  ChatRequest,
-  ChatResponse,
-  AuthTokens,
-  User,
-  DashboardData,
-  AnalysisResponse,
-  CreativeResponse,
-} from '../types';
+import type { AuthTokens, ChatRequest, ChatResponse, User } from '../types';
 
 const API_BASE = import.meta.env.VITE_API_URL || '';
 
@@ -16,7 +8,6 @@ const api = axios.create({
   headers: { 'Content-Type': 'application/json' },
 });
 
-// Attach auth token to every request
 api.interceptors.request.use((config) => {
   const token = localStorage.getItem('access_token');
   if (token) {
@@ -24,8 +15,6 @@ api.interceptors.request.use((config) => {
   }
   return config;
 });
-
-// ── Auth ────────────────────────────────────────────────────
 
 export const authService = {
   async signup(email: string, password: string): Promise<AuthTokens> {
@@ -89,8 +78,6 @@ export const authService = {
   },
 };
 
-// ── Chat ────────────────────────────────────────────────────
-
 export const chatService = {
   async sendMessage(request: ChatRequest): Promise<ChatResponse> {
     const { data } = await api.post<ChatResponse>('/chat', request);
@@ -108,11 +95,13 @@ export const chatService = {
   },
 };
 
-// ── Restaurant Ops ─────────────────────────────────────────
-
 export const restaurantService = {
   async ingestCsv(
-    route: '/restaurant/ingest/pos-csv' | '/restaurant/ingest/purchases-csv' | '/restaurant/ingest/labor-csv' | '/restaurant/ingest/reviews-csv',
+    route:
+      | '/restaurant/ingest/pos-csv'
+      | '/restaurant/ingest/purchases-csv'
+      | '/restaurant/ingest/labor-csv'
+      | '/restaurant/ingest/reviews-csv',
     file: File,
     venueId?: string,
     idempotencyKey?: string,
@@ -194,171 +183,6 @@ export const restaurantService = {
   },
 };
 
-// ── Dashboard / Analytics ───────────────────────────────────
-
-export const analyticsService = {
-  async getDashboard(): Promise<DashboardData> {
-    const { data } = await api.get<DashboardData>('/analytics/dashboard');
-    return data;
-  },
-
-  async getForecast(metric: string, horizon: number = 30) {
-    const { data } = await api.post('/analytics/forecast', { metric, horizon });
-    return data;
-  },
-
-  async recordExperiment(experimentId: string, variants: Array<Record<string, unknown>>) {
-    const { data } = await api.post('/analytics/experiment', {
-      experiment_id: experimentId,
-      variants,
-    });
-    return data;
-  },
-};
-
-// ── Business Analysis ───────────────────────────────────────
-
-export const analysisService = {
-  async marketResearch(query: string): Promise<AnalysisResponse> {
-    const { data } = await api.post<AnalysisResponse>('/analysis/market', { query });
-    return data;
-  },
-
-  async swotAnalysis(subject: string): Promise<AnalysisResponse> {
-    const { data } = await api.post<AnalysisResponse>('/analysis/swot', { subject });
-    return data;
-  },
-
-  async pestelAnalysis(subject: string): Promise<AnalysisResponse> {
-    const { data } = await api.post<AnalysisResponse>('/analysis/pestel', { subject });
-    return data;
-  },
-
-  async competitorAnalysis(companyNames: string[]): Promise<AnalysisResponse> {
-    const { data } = await api.post<AnalysisResponse>('/analysis/competitors', {
-      company_names: companyNames,
-    });
-    return data;
-  },
-
-  async createPersonas(dataSource: string = 'general', numPersonas: number = 3): Promise<AnalysisResponse> {
-    const { data } = await api.post<AnalysisResponse>('/analysis/personas', {
-      data_source: dataSource,
-      num_personas: numPersonas,
-    });
-    return data;
-  },
-};
-
-// ── Creative ────────────────────────────────────────────────
-
-export const creativeService = {
-  async generateCopy(brief: string, tone?: string, length?: number): Promise<CreativeResponse> {
-    const { data } = await api.post<CreativeResponse>('/creative/generate', { brief, tone, length });
-    return data;
-  },
-
-  async generateImage(description: string, style?: string): Promise<CreativeResponse> {
-    const { data } = await api.post<CreativeResponse>('/creative/image', { description, style });
-    return data;
-  },
-
-  async suggestABTests(baseCopy: string): Promise<CreativeResponse> {
-    const { data } = await api.post<CreativeResponse>('/creative/ab-test', { base_copy: baseCopy });
-    return data;
-  },
-};
-
-// ── CRM ─────────────────────────────────────────────────────
-
-export const crmService = {
-  async getLeads() {
-    const { data } = await api.get('/crm/leads');
-    return data;
-  },
-
-  async getCampaigns() {
-    const { data } = await api.get('/crm/campaigns');
-    return data;
-  },
-
-  async createLead(leadId: string, attributes: Record<string, unknown>) {
-    const { data } = await api.post('/crm/lead', { lead_id: leadId, attributes });
-    return data;
-  },
-
-  async createCampaign(name: string, channel: string = 'email') {
-    const { data } = await api.post('/crm/campaign', { name, channel });
-    return data;
-  },
-
-  async checkCompliance(message: string, channel: string = 'email') {
-    const { data } = await api.post('/crm/compliance', { message, channel });
-    return data;
-  },
-};
-
-// ── Billing ─────────────────────────────────────────────────
-
-export const billingService = {
-  async createCheckoutSession(plan: string = 'pro') {
-    const { data } = await api.post('/billing/create-checkout-session', { plan });
-    return data as {
-      checkout_url?: string;
-      portal_url?: string;
-      session_id?: string;
-      status: string;
-      demo?: boolean;
-    };
-  },
-
-  async createPortalSession() {
-    const { data } = await api.post('/billing/portal-session');
-    return data as {
-      checkout_url?: string;
-      portal_url?: string;
-      session_id?: string;
-      status: string;
-      demo?: boolean;
-    };
-  },
-
-  async getSubscription() {
-    const { data } = await api.get('/billing/subscription');
-    return data as {
-      tier: string;
-      status: string;
-      stripe_subscription_id?: string;
-      stripe_customer_id?: string;
-      current_period_start?: string;
-      current_period_end?: string;
-      cancel_at_period_end: boolean;
-      demo?: boolean;
-    };
-  },
-
-  async getInvoices() {
-    const { data } = await api.get('/billing/invoices');
-    return data as {
-      invoices: Array<{
-        id: string;
-        amount_due: number;
-        amount_paid: number;
-        currency: string;
-        status: string;
-        hosted_invoice_url?: string;
-        invoice_pdf?: string;
-        period_start?: string;
-        period_end?: string;
-        created_at?: string;
-      }>;
-      demo?: boolean;
-    };
-  },
-};
-
-// ── Integrations ────────────────────────────────────────────
-
 export const integrationsService = {
   async getCatalog() {
     const { data } = await api.get<{ integrations: Array<{ name: string; status: string; demo_mode: boolean; authenticated: boolean }> }>('/integrations/catalog');
@@ -395,8 +219,6 @@ export const integrationsService = {
   },
 };
 
-// ── Growth / Tracking ──────────────────────────────────────
-
 export const growthService = {
   async trackEvent(eventName: string, properties?: Record<string, unknown>, source: string = 'web') {
     const { data } = await api.post('/growth/track', {
@@ -418,21 +240,6 @@ export const growthService = {
     utm_campaign?: string;
   }) {
     const { data } = await api.post('/growth/waitlist', payload);
-    return data as { message: string };
-  },
-
-  async getFunnelSummary(days: number = 14) {
-    const { data } = await api.get('/growth/funnel-summary', { params: { days } });
-    return data as {
-      date_from: string;
-      date_to: string;
-      steps: Array<{ name: string; count: number }>;
-      conversion_signup_from_visitor: number;
-      conversion_verified_from_signup: number;
-      conversion_first_value_from_verified: number;
-      conversion_return_from_first_value: number;
-    };
+    return data;
   },
 };
-
-export default api;

@@ -1,6 +1,13 @@
 import { useMemo, useState } from 'react';
 import { Loader2, Play, RefreshCw } from 'lucide-react';
 import { restaurantService } from '../services/api';
+import {
+  EmptyPanelMessage,
+  OpsKpiCard,
+  OpsPageHeader,
+  OpsPanel,
+  RecommendationCard,
+} from '../components/ui/OpsPrimitives';
 
 interface MarginItem {
   menu_item: string;
@@ -56,6 +63,12 @@ function daysAgoIso(days: number): string {
   return d.toISOString().slice(0, 10);
 }
 
+function toneByMargin(marginPct: number): 'healthy' | 'warning' | 'critical' {
+  if (marginPct >= 62) return 'healthy';
+  if (marginPct >= 50) return 'warning';
+  return 'critical';
+}
+
 export default function MarginBrainPage() {
   const [fromDate, setFromDate] = useState<string>(daysAgoIso(6));
   const [toDate, setToDate] = useState<string>(todayIso());
@@ -74,12 +87,10 @@ export default function MarginBrainPage() {
         restaurantService.getFinanceMargin(fromDate, toDate),
         restaurantService.getMenuRepricing(fromDate, toDate),
       ]);
-      const marginData = marginRaw as unknown as MarginResponse;
-      const repricingData = repricingRaw as unknown as RepricingResponse;
-      setMargin(marginData);
-      setRepricing(repricingData.repricing_suggestions ?? []);
+      setMargin(marginRaw as unknown as MarginResponse);
+      setRepricing((repricingRaw as unknown as RepricingResponse).repricing_suggestions ?? []);
     } catch {
-      setError('Failed to load margin data. Make sure POS and recipe data are ingested.');
+      setError('Margin intelligence is unavailable. Ingest POS and recipe inputs, then retry.');
     } finally {
       setLoading(false);
     }
@@ -94,119 +105,176 @@ export default function MarginBrainPage() {
         to_date: toDate,
         elasticity: -1.1,
       });
-      const simulationData = payload as unknown as PriceSimulationResponse;
-      setSimulation(simulationData.summary);
+      setSimulation((payload as unknown as PriceSimulationResponse).summary);
     } catch {
-      setError('Failed to run price simulation.');
+      setError('Price simulation failed for this date range.');
     } finally {
       setRunningScenario(false);
     }
   };
 
-  const topItems = useMemo(() => (margin?.items ?? []).slice(0, 8), [margin]);
+  const lowMarginItems = useMemo(() => {
+    if (!margin) return [];
+    return [...margin.items].filter((item) => item.revenue > 0).sort((a, b) => a.margin_pct - b.margin_pct).slice(0, 8);
+  }, [margin]);
+
+  const topRevenueItems = useMemo(() => {
+    if (!margin) return [];
+    return [...margin.items].sort((a, b) => b.revenue - a.revenue).slice(0, 8);
+  }, [margin]);
 
   return (
     <div className="space-y-6">
-      <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
-        <div className="flex flex-wrap items-end justify-between gap-3">
-          <div>
-            <p className="text-xs uppercase tracking-[0.18em] text-slate-500">Finance & Margin</p>
-            <h2 className="text-xl font-bold text-slate-900">Margin Brain</h2>
-          </div>
-          <div className="flex flex-wrap items-center gap-2">
-            <input type="date" value={fromDate} onChange={(e) => setFromDate(e.target.value)} className="rounded-lg border border-slate-300 px-3 py-2 text-sm" />
-            <input type="date" value={toDate} onChange={(e) => setToDate(e.target.value)} className="rounded-lg border border-slate-300 px-3 py-2 text-sm" />
-            <button onClick={() => void load()} className="inline-flex items-center gap-2 rounded-lg border border-slate-300 px-3 py-2 text-sm hover:bg-slate-50">
-              <RefreshCw className="h-4 w-4" /> Load
-            </button>
-            <button
-              onClick={() => void runScenario()}
-              disabled={runningScenario}
-              className="inline-flex items-center gap-2 rounded-lg bg-slate-900 px-3 py-2 text-sm text-white hover:bg-slate-800 disabled:opacity-60"
-            >
-              {runningScenario ? <Loader2 className="h-4 w-4 animate-spin" /> : <Play className="h-4 w-4" />} Simulate
-            </button>
-          </div>
-        </div>
-        {error && <p className="mt-3 text-sm text-red-600">{error}</p>}
-      </section>
+      <OpsPageHeader
+        eyebrow="Finance & Margin"
+        title="Margin Brain"
+        subtitle="Turn sales and cost data into pricing decisions, margin protection signals, and break-even visibility."
+      >
+        <input type="date" value={fromDate} onChange={(e) => setFromDate(e.target.value)} className="rounded-lg border border-slate-300 px-3 py-2 text-sm" />
+        <input type="date" value={toDate} onChange={(e) => setToDate(e.target.value)} className="rounded-lg border border-slate-300 px-3 py-2 text-sm" />
+        <button onClick={() => void load()} className="inline-flex items-center gap-2 rounded-lg border border-slate-300 px-3 py-2 text-sm hover:bg-slate-50">
+          <RefreshCw className="h-4 w-4" /> Load
+        </button>
+        <button
+          onClick={() => void runScenario()}
+          disabled={runningScenario}
+          className="inline-flex items-center gap-2 rounded-lg bg-slate-900 px-3 py-2 text-sm text-white hover:bg-slate-800 disabled:opacity-60"
+        >
+          {runningScenario ? <Loader2 className="h-4 w-4 animate-spin" /> : <Play className="h-4 w-4" />} Simulate
+        </button>
+      </OpsPageHeader>
+
+      {error && <p className="rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-700">{error}</p>}
 
       {loading ? (
-        <div className="flex min-h-[30vh] items-center justify-center">
+        <div className="flex min-h-[35vh] items-center justify-center">
           <Loader2 className="h-8 w-8 animate-spin text-orange-500" />
         </div>
       ) : (
         <>
-          {margin && (
-            <section className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-              <article className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
-                <p className="text-xs uppercase tracking-wide text-slate-500">Revenue</p>
-                <p className="mt-2 text-2xl font-bold text-slate-900">€{margin.summary.revenue.toFixed(2)}</p>
-              </article>
-              <article className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
-                <p className="text-xs uppercase tracking-wide text-slate-500">Estimated COGS</p>
-                <p className="mt-2 text-2xl font-bold text-slate-900">€{margin.summary.estimated_cogs.toFixed(2)}</p>
-              </article>
-              <article className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
-                <p className="text-xs uppercase tracking-wide text-slate-500">Gross Margin</p>
-                <p className="mt-2 text-2xl font-bold text-emerald-700">€{margin.summary.gross_margin.toFixed(2)}</p>
-                <p className="mt-1 text-xs text-slate-500">{margin.summary.gross_margin_pct.toFixed(1)}%</p>
-              </article>
-              <article className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
-                <p className="text-xs uppercase tracking-wide text-slate-500">Break-even Progress</p>
-                <p className="mt-2 text-2xl font-bold text-slate-900">{margin.summary.break_even_progress_pct.toFixed(1)}%</p>
-                <p className="mt-1 text-xs text-slate-500">Target €{margin.summary.break_even_revenue.toFixed(0)}</p>
-              </article>
+          {margin ? (
+            <section className="grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
+              <OpsKpiCard label="Revenue" value={`€${margin.summary.revenue.toFixed(2)}`} helper="Net sales for selected period" />
+              <OpsKpiCard label="Estimated COGS" value={`€${margin.summary.estimated_cogs.toFixed(2)}`} helper="Recipe and purchase cost baseline" />
+              <OpsKpiCard
+                label="Gross Margin"
+                value={`€${margin.summary.gross_margin.toFixed(2)}`}
+                helper={`${margin.summary.gross_margin_pct.toFixed(1)}%`}
+                tone={toneByMargin(margin.summary.gross_margin_pct)}
+              />
+              <OpsKpiCard
+                label="Break-even Progress"
+                value={`${margin.summary.break_even_progress_pct.toFixed(1)}%`}
+                helper={`Target €${margin.summary.break_even_revenue.toFixed(0)}`}
+                tone={margin.summary.break_even_progress_pct >= 100 ? 'healthy' : 'warning'}
+              />
+              <OpsKpiCard
+                label="Margin Protection Gap"
+                value={`${Math.max(0, 65 - margin.summary.gross_margin_pct).toFixed(1)} pts`}
+                helper="Gap to 65% reference guardrail"
+                tone={margin.summary.gross_margin_pct >= 65 ? 'healthy' : 'critical'}
+              />
             </section>
+          ) : (
+            <OpsPanel title="No Margin Snapshot Loaded">
+              <EmptyPanelMessage message="Load a date range after CSV ingestion to activate margin intelligence." />
+            </OpsPanel>
           )}
 
-          <section className="grid gap-4 lg:grid-cols-2">
-            <article className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
-              <h3 className="font-semibold text-slate-900">Top Items by Revenue</h3>
-              <div className="mt-3 space-y-2">
-                {topItems.length === 0 ? (
-                  <p className="text-sm text-slate-500">No item sales data in selected period.</p>
-                ) : (
-                  topItems.map((item) => (
-                    <div key={item.menu_item} className="rounded-lg border border-slate-200 p-3 text-sm">
-                      <p className="font-semibold text-slate-900">{item.menu_item}</p>
-                      <p className="text-xs text-slate-600">
-                        Qty {item.quantity} · Revenue €{item.revenue.toFixed(2)} · Margin {item.margin_pct.toFixed(1)}%
+          <section className="grid gap-4 xl:grid-cols-2">
+            <OpsPanel title="Top Revenue Items" subtitle="High-volume dishes ranked by contribution and margin quality.">
+              {topRevenueItems.length === 0 ? (
+                <EmptyPanelMessage message="No item-level sales found for this range." />
+              ) : (
+                <div className="space-y-2">
+                  {topRevenueItems.map((item) => (
+                    <article key={`${item.menu_item}-top`} className="rounded-xl border border-slate-200 bg-white p-3 text-sm">
+                      <div className="flex flex-wrap items-center justify-between gap-2">
+                        <p className="font-semibold text-slate-900">{item.menu_item}</p>
+                        <span className={item.margin_pct >= 55 ? 'tp-badge tp-badge-healthy' : item.margin_pct >= 45 ? 'tp-badge tp-badge-warning' : 'tp-badge tp-badge-critical'}>
+                          {item.margin_pct.toFixed(1)}% margin
+                        </span>
+                      </div>
+                      <p className="mt-1 text-xs text-slate-600">
+                        Qty {item.quantity} · Revenue €{item.revenue.toFixed(2)} · COGS €{item.estimated_cogs.toFixed(2)}
                       </p>
-                    </div>
-                  ))
-                )}
-              </div>
-            </article>
+                    </article>
+                  ))}
+                </div>
+              )}
+            </OpsPanel>
 
-            <article className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
-              <h3 className="font-semibold text-slate-900">Repricing Suggestions</h3>
-              <div className="mt-3 space-y-2">
-                {repricing.length === 0 ? (
-                  <p className="text-sm text-slate-500">No repricing suggestions for this period.</p>
-                ) : (
-                  repricing.slice(0, 8).map((row) => (
-                    <div key={`${row.menu_item}-${row.recommended_change_pct}`} className="rounded-lg border border-slate-200 p-3 text-sm">
-                      <p className="font-semibold text-slate-900">{row.menu_item}</p>
-                      <p className="text-xs text-slate-600">Change {row.recommended_change_pct.toFixed(1)}% · Expected margin {row.expected_margin_pct.toFixed(1)}%</p>
-                      <p className="mt-1 text-xs text-slate-500">{row.reason}</p>
-                    </div>
-                  ))
-                )}
-              </div>
-            </article>
+            <OpsPanel title="Margin Leakage Watchlist" subtitle="Low-margin dishes that should be repriced, bundled, or operationally corrected.">
+              {lowMarginItems.length === 0 ? (
+                <EmptyPanelMessage message="No low-margin outliers detected." />
+              ) : (
+                <div className="space-y-2">
+                  {lowMarginItems.map((item) => (
+                    <RecommendationCard
+                      key={`${item.menu_item}-low`}
+                      title={item.menu_item}
+                      warning={`Current margin is ${item.margin_pct.toFixed(1)}% on €${item.revenue.toFixed(2)} revenue.`}
+                      why="Cost-to-price ratio is below healthy contribution target."
+                      nextAction="Test repricing and enforce recipe/portion standards for this item."
+                      automatable={false}
+                      severity={item.margin_pct < 40 ? 'critical' : 'warning'}
+                    />
+                  ))}
+                </div>
+              )}
+            </OpsPanel>
           </section>
 
-          {simulation && (
-            <section className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
-              <h3 className="font-semibold text-slate-900">Price Scenario Result</h3>
-              <div className="mt-2 grid gap-2 text-sm text-slate-700 sm:grid-cols-3">
-                <p>Items simulated: <span className="font-semibold">{simulation.items_simulated}</span></p>
-                <p>Revenue delta: <span className={`font-semibold ${simulation.revenue_delta >= 0 ? 'text-emerald-700' : 'text-red-600'}`}>€{simulation.revenue_delta.toFixed(2)}</span></p>
-                <p>Margin delta: <span className={`font-semibold ${simulation.gross_margin_delta >= 0 ? 'text-emerald-700' : 'text-red-600'}`}>€{simulation.gross_margin_delta.toFixed(2)}</span></p>
-              </div>
-            </section>
-          )}
+          <section className="grid gap-4 xl:grid-cols-2">
+            <OpsPanel title="Repricing Suggestions" subtitle="AI-generated price actions to protect gross margin.">
+              {repricing.length === 0 ? (
+                <EmptyPanelMessage message="No repricing suggestions generated for this range." />
+              ) : (
+                <div className="space-y-2">
+                  {repricing.slice(0, 10).map((row) => (
+                    <RecommendationCard
+                      key={`${row.menu_item}-${row.recommended_change_pct}`}
+                      title={`${row.menu_item} · ${row.recommended_change_pct.toFixed(1)}% price change`}
+                      warning={`Expected margin ${row.expected_margin_pct.toFixed(1)}% after adjustment.`}
+                      why={row.reason}
+                      nextAction="Run a 7-day A/B menu pricing test, then lock successful changes."
+                      automatable={false}
+                      severity={row.recommended_change_pct > 0 ? 'warning' : 'notice'}
+                    />
+                  ))}
+                </div>
+              )}
+            </OpsPanel>
+
+            <OpsPanel title="Scenario Simulator" subtitle="Projected effect of pricing changes on revenue and gross margin.">
+              {simulation ? (
+                <div className="grid gap-3 sm:grid-cols-2">
+                  <article className="tp-panel-muted">
+                    <p className="tp-kpi-label">Items Simulated</p>
+                    <p className="tp-kpi-value">{simulation.items_simulated}</p>
+                  </article>
+                  <article className="tp-panel-muted">
+                    <p className="tp-kpi-label">Revenue Delta</p>
+                    <p className={`tp-kpi-value ${simulation.revenue_delta >= 0 ? 'text-emerald-700' : 'text-red-700'}`}>
+                      €{simulation.revenue_delta.toFixed(2)}
+                    </p>
+                  </article>
+                  <article className="tp-panel-muted">
+                    <p className="tp-kpi-label">Gross Margin Delta</p>
+                    <p className={`tp-kpi-value ${simulation.gross_margin_delta >= 0 ? 'text-emerald-700' : 'text-red-700'}`}>
+                      €{simulation.gross_margin_delta.toFixed(2)}
+                    </p>
+                  </article>
+                  <article className="tp-panel-muted">
+                    <p className="tp-kpi-label">Projected Margin</p>
+                    <p className="tp-kpi-value text-slate-900">€{simulation.projected_gross_margin.toFixed(2)}</p>
+                  </article>
+                </div>
+              ) : (
+                <EmptyPanelMessage message="Run simulation to preview price impact before committing menu changes." />
+              )}
+            </OpsPanel>
+          </section>
         </>
       )}
     </div>
