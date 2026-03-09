@@ -35,6 +35,9 @@ class DateRange:
 class RestaurantOpsModule:
     DEFAULT_CURRENCY = "EUR"
     DEFAULT_TIMEZONE = "Europe/Madrid"
+    DEFAULT_LABOR_TARGET_PCT = 30.0
+    DEFAULT_FOOD_TARGET_PCT = 30.0
+    DEFAULT_SALES_DROP_ALERT_PCT = 10.0
 
     def _parse_float(self, value: Any, default: float = 0.0) -> float:
         if value in (None, ""):
@@ -71,17 +74,55 @@ class RestaurantOpsModule:
             raise ValueError("CSV file has no header row")
         return [{(k or "").strip(): (v or "").strip() for k, v in row.items()} for row in reader]
 
+    def _validate_required_columns(self, rows: list[dict[str, str]], required: set[str]) -> None:
+        fields = set(rows[0].keys() if rows else [])
+        missing = sorted(required - fields)
+        if missing:
+            raise ValueError(f"Missing required columns: {', '.join(missing)}")
+
+    def _build_row_error(self, row_number: int, row: dict[str, str], exc: Exception) -> dict[str, Any]:
+        return {"row_number": row_number, "error": str(exc), "row": row}
+
+    def _kpi_targets(self, venue: RestaurantVenue) -> dict[str, float]:
+        return {
+            "labor_target_pct": self._parse_float(getattr(venue, "labor_target_pct", None), self.DEFAULT_LABOR_TARGET_PCT),
+            "food_target_pct": self._parse_float(getattr(venue, "food_target_pct", None), self.DEFAULT_FOOD_TARGET_PCT),
+            "sales_drop_alert_pct": self._parse_float(
+                getattr(venue, "sales_drop_alert_pct", None), self.DEFAULT_SALES_DROP_ALERT_PCT
+            ),
+        }
+
     def _get_or_create_venue(self, db: Session, venue_id: Optional[str] = None) -> RestaurantVenue:
         if venue_id:
             venue = db.query(RestaurantVenue).filter(RestaurantVenue.id == venue_id).first()
             if venue:
                 return venue
+            venue = RestaurantVenue(
+                id=venue_id,
+                name=f"TablePilot Venue {venue_id[:8]}",
+                currency=self.DEFAULT_CURRENCY,
+                timezone=self.DEFAULT_TIMEZONE,
+                labor_target_pct=self.DEFAULT_LABOR_TARGET_PCT,
+                food_target_pct=self.DEFAULT_FOOD_TARGET_PCT,
+                sales_drop_alert_pct=self.DEFAULT_SALES_DROP_ALERT_PCT,
+            )
+            db.add(venue)
+            db.commit()
+            db.refresh(venue)
+            return venue
 
         venue = db.query(RestaurantVenue).first()
         if venue:
             return venue
 
-        venue = RestaurantVenue(name="TablePilot Demo Venue", currency=self.DEFAULT_CURRENCY, timezone=self.DEFAULT_TIMEZONE)
+        venue = RestaurantVenue(
+            name="TablePilot Demo Venue",
+            currency=self.DEFAULT_CURRENCY,
+            timezone=self.DEFAULT_TIMEZONE,
+            labor_target_pct=self.DEFAULT_LABOR_TARGET_PCT,
+            food_target_pct=self.DEFAULT_FOOD_TARGET_PCT,
+            sales_drop_alert_pct=self.DEFAULT_SALES_DROP_ALERT_PCT,
+        )
         db.add(venue)
         db.commit()
         db.refresh(venue)
@@ -102,45 +143,52 @@ class RestaurantOpsModule:
     def ingest_pos_csv(self, db: Session, file_bytes: bytes, venue_id: Optional[str] = None) -> dict:
         rows = self._read_csv(file_bytes)
         required = {"date", "menu_item", "quantity", "net_sales"}
-        fields = set(rows[0].keys() if rows else [])
-        missing = sorted(required - fields)
-        if missing:
-            raise ValueError(f"Missing required columns: {', '.join(missing)}")
+        self._validate_required_columns(rows, required)
 
         venue = self._get_or_create_venue(db, venue_id)
         created = 0
+        skipped = 0
         total_revenue = 0.0
         total_covers = 0
         dates: list[str] = []
+        row_errors: list[dict[str, Any]] = []
 
-        for row in rows:
-            sale_date = self._normalize_date(row.get("date", ""))
-            quantity = self._parse_int(row.get("quantity"), 0)
-            net_sales = self._parse_float(row.get("net_sales"), 0.0)
-            covers = self._parse_int(row.get("covers"), 0)
-            forecast = self._parse_float(row.get("forecast_revenue"), net_sales)
-            db.add(
-                RestaurantSale(
-                    venue_id=venue.id,
-                    sale_date=sale_date,
-                    channel=row.get("channel") or "in_store",
-                    menu_item=row.get("menu_item") or "Unknown item",
-                    quantity=quantity,
-                    covers=covers,
-                    net_sales=net_sales,
-                    forecast_revenue=forecast,
+        for idx, row in enumerate(rows, start=2):
+            try:
+                sale_date = self._normalize_date(row.get("date", ""))
+                quantity = self._parse_int(row.get("quantity"), 0)
+                net_sales = self._parse_float(row.get("net_sales"), 0.0)
+                covers = self._parse_int(row.get("covers"), 0)
+                forecast = self._parse_float(row.get("forecast_revenue"), net_sales)
+                db.add(
+                    RestaurantSale(
+                        venue_id=venue.id,
+                        sale_date=sale_date,
+                        channel=row.get("channel") or "in_store",
+                        menu_item=row.get("menu_item") or "Unknown item",
+                        quantity=quantity,
+                        covers=covers,
+                        net_sales=net_sales,
+                        forecast_revenue=forecast,
+                    )
                 )
-            )
-            created += 1
-            total_revenue += net_sales
-            total_covers += covers
-            dates.append(sale_date)
+                created += 1
+                total_revenue += net_sales
+                total_covers += covers
+                dates.append(sale_date)
+            except Exception as exc:  # noqa: BLE001
+                skipped += 1
+                row_errors.append(self._build_row_error(idx, row, exc))
 
+        if created == 0 and row_errors:
+            raise ValueError("No valid POS rows to ingest")
         db.commit()
         return {
             "status": "success",
             "venue_id": venue.id,
             "rows_ingested": created,
+            "rows_skipped": skipped,
+            "row_errors": row_errors[:25],
             "date_range": {"from": min(dates) if dates else None, "to": max(dates) if dates else None},
             "totals": {"revenue": round(total_revenue, 2), "covers": total_covers},
         }
@@ -148,56 +196,63 @@ class RestaurantOpsModule:
     def ingest_purchases_csv(self, db: Session, file_bytes: bytes, venue_id: Optional[str] = None) -> dict:
         rows = self._read_csv(file_bytes)
         required = {"date", "item_name", "quantity", "unit_cost"}
-        fields = set(rows[0].keys() if rows else [])
-        missing = sorted(required - fields)
-        if missing:
-            raise ValueError(f"Missing required columns: {', '.join(missing)}")
+        self._validate_required_columns(rows, required)
 
         venue = self._get_or_create_venue(db, venue_id)
         created = 0
+        skipped = 0
         total = 0.0
         dates: list[str] = []
+        row_errors: list[dict[str, Any]] = []
 
-        for row in rows:
-            purchase_date = self._normalize_date(row.get("date", ""))
-            qty = self._parse_float(row.get("quantity"), 0.0)
-            unit_cost = self._parse_float(row.get("unit_cost"), 0.0)
-            total_cost = self._parse_float(row.get("total_cost"), qty * unit_cost)
-            db.add(
-                RestaurantPurchase(
-                    venue_id=venue.id,
-                    purchase_date=purchase_date,
-                    item_name=row.get("item_name") or "Unknown ingredient",
-                    supplier=row.get("supplier") or "Unknown supplier",
-                    quantity=qty,
-                    unit_cost=unit_cost,
-                    total_cost=total_cost,
-                )
-            )
-
-            if any(row.get(k) for k in ["on_hand_qty", "par_level", "waste_qty", "theoretical_usage", "actual_usage"]):
+        for idx, row in enumerate(rows, start=2):
+            try:
+                purchase_date = self._normalize_date(row.get("date", ""))
+                qty = self._parse_float(row.get("quantity"), 0.0)
+                unit_cost = self._parse_float(row.get("unit_cost"), 0.0)
+                total_cost = self._parse_float(row.get("total_cost"), qty * unit_cost)
                 db.add(
-                    RestaurantStockSnapshot(
+                    RestaurantPurchase(
                         venue_id=venue.id,
-                        snapshot_date=purchase_date,
+                        purchase_date=purchase_date,
                         item_name=row.get("item_name") or "Unknown ingredient",
-                        on_hand_qty=self._parse_float(row.get("on_hand_qty"), 0.0),
-                        par_level=self._parse_float(row.get("par_level"), 0.0),
-                        waste_qty=self._parse_float(row.get("waste_qty"), 0.0),
-                        theoretical_usage=self._parse_float(row.get("theoretical_usage"), 0.0),
-                        actual_usage=self._parse_float(row.get("actual_usage"), 0.0),
+                        supplier=row.get("supplier") or "Unknown supplier",
+                        quantity=qty,
+                        unit_cost=unit_cost,
+                        total_cost=total_cost,
                     )
                 )
 
-            created += 1
-            total += total_cost
-            dates.append(purchase_date)
+                if any(row.get(k) for k in ["on_hand_qty", "par_level", "waste_qty", "theoretical_usage", "actual_usage"]):
+                    db.add(
+                        RestaurantStockSnapshot(
+                            venue_id=venue.id,
+                            snapshot_date=purchase_date,
+                            item_name=row.get("item_name") or "Unknown ingredient",
+                            on_hand_qty=self._parse_float(row.get("on_hand_qty"), 0.0),
+                            par_level=self._parse_float(row.get("par_level"), 0.0),
+                            waste_qty=self._parse_float(row.get("waste_qty"), 0.0),
+                            theoretical_usage=self._parse_float(row.get("theoretical_usage"), 0.0),
+                            actual_usage=self._parse_float(row.get("actual_usage"), 0.0),
+                        )
+                    )
 
+                created += 1
+                total += total_cost
+                dates.append(purchase_date)
+            except Exception as exc:  # noqa: BLE001
+                skipped += 1
+                row_errors.append(self._build_row_error(idx, row, exc))
+
+        if created == 0 and row_errors:
+            raise ValueError("No valid purchase rows to ingest")
         db.commit()
         return {
             "status": "success",
             "venue_id": venue.id,
             "rows_ingested": created,
+            "rows_skipped": skipped,
+            "row_errors": row_errors[:25],
             "date_range": {"from": min(dates) if dates else None, "to": max(dates) if dates else None},
             "totals": {"purchase_cost": round(total, 2)},
         }
@@ -205,42 +260,49 @@ class RestaurantOpsModule:
     def ingest_labor_csv(self, db: Session, file_bytes: bytes, venue_id: Optional[str] = None) -> dict:
         rows = self._read_csv(file_bytes)
         required = {"date", "staff_name", "role", "hours_worked", "hourly_rate"}
-        fields = set(rows[0].keys() if rows else [])
-        missing = sorted(required - fields)
-        if missing:
-            raise ValueError(f"Missing required columns: {', '.join(missing)}")
+        self._validate_required_columns(rows, required)
 
         venue = self._get_or_create_venue(db, venue_id)
         created = 0
+        skipped = 0
         total_cost = 0.0
         dates: list[str] = []
+        row_errors: list[dict[str, Any]] = []
 
-        for row in rows:
-            shift_date = self._normalize_date(row.get("date", ""))
-            hours = self._parse_float(row.get("hours_worked"), 0.0)
-            rate = self._parse_float(row.get("hourly_rate"), 0.0)
-            cost = self._parse_float(row.get("labor_cost"), hours * rate)
-            db.add(
-                RestaurantLaborShift(
-                    venue_id=venue.id,
-                    shift_date=shift_date,
-                    staff_name=row.get("staff_name") or "Unknown",
-                    role=row.get("role") or "staff",
-                    hours_worked=hours,
-                    hourly_rate=rate,
-                    labor_cost=cost,
-                    scheduled_covers=self._parse_int(row.get("scheduled_covers"), 0),
+        for idx, row in enumerate(rows, start=2):
+            try:
+                shift_date = self._normalize_date(row.get("date", ""))
+                hours = self._parse_float(row.get("hours_worked"), 0.0)
+                rate = self._parse_float(row.get("hourly_rate"), 0.0)
+                cost = self._parse_float(row.get("labor_cost"), hours * rate)
+                db.add(
+                    RestaurantLaborShift(
+                        venue_id=venue.id,
+                        shift_date=shift_date,
+                        staff_name=row.get("staff_name") or "Unknown",
+                        role=row.get("role") or "staff",
+                        hours_worked=hours,
+                        hourly_rate=rate,
+                        labor_cost=cost,
+                        scheduled_covers=self._parse_int(row.get("scheduled_covers"), 0),
+                    )
                 )
-            )
-            created += 1
-            total_cost += cost
-            dates.append(shift_date)
+                created += 1
+                total_cost += cost
+                dates.append(shift_date)
+            except Exception as exc:  # noqa: BLE001
+                skipped += 1
+                row_errors.append(self._build_row_error(idx, row, exc))
 
+        if created == 0 and row_errors:
+            raise ValueError("No valid labor rows to ingest")
         db.commit()
         return {
             "status": "success",
             "venue_id": venue.id,
             "rows_ingested": created,
+            "rows_skipped": skipped,
+            "row_errors": row_errors[:25],
             "date_range": {"from": min(dates) if dates else None, "to": max(dates) if dates else None},
             "totals": {"labor_cost": round(total_cost, 2)},
         }
@@ -255,40 +317,47 @@ class RestaurantOpsModule:
     def ingest_reviews_csv(self, db: Session, file_bytes: bytes, venue_id: Optional[str] = None) -> dict:
         rows = self._read_csv(file_bytes)
         required = {"date", "rating", "text"}
-        fields = set(rows[0].keys() if rows else [])
-        missing = sorted(required - fields)
-        if missing:
-            raise ValueError(f"Missing required columns: {', '.join(missing)}")
+        self._validate_required_columns(rows, required)
 
         venue = self._get_or_create_venue(db, venue_id)
         created = 0
+        skipped = 0
         sentiments: list[float] = []
         dates: list[str] = []
+        row_errors: list[dict[str, Any]] = []
 
-        for row in rows:
-            review_date = self._normalize_date(row.get("date", ""))
-            rating = self._parse_float(row.get("rating"), 0.0)
-            text = row.get("text") or ""
-            sentiment = self._parse_float(row.get("sentiment_score"), self._derive_sentiment(rating, text))
-            db.add(
-                RestaurantReview(
-                    venue_id=venue.id,
-                    review_date=review_date,
-                    source=row.get("source") or "google",
-                    rating=rating,
-                    sentiment_score=sentiment,
-                    text=text,
+        for idx, row in enumerate(rows, start=2):
+            try:
+                review_date = self._normalize_date(row.get("date", ""))
+                rating = self._parse_float(row.get("rating"), 0.0)
+                text = row.get("text") or ""
+                sentiment = self._parse_float(row.get("sentiment_score"), self._derive_sentiment(rating, text))
+                db.add(
+                    RestaurantReview(
+                        venue_id=venue.id,
+                        review_date=review_date,
+                        source=row.get("source") or "google",
+                        rating=rating,
+                        sentiment_score=sentiment,
+                        text=text,
+                    )
                 )
-            )
-            created += 1
-            sentiments.append(sentiment)
-            dates.append(review_date)
+                created += 1
+                sentiments.append(sentiment)
+                dates.append(review_date)
+            except Exception as exc:  # noqa: BLE001
+                skipped += 1
+                row_errors.append(self._build_row_error(idx, row, exc))
 
+        if created == 0 and row_errors:
+            raise ValueError("No valid review rows to ingest")
         db.commit()
         return {
             "status": "success",
             "venue_id": venue.id,
             "rows_ingested": created,
+            "rows_skipped": skipped,
+            "row_errors": row_errors[:25],
             "date_range": {"from": min(dates) if dates else None, "to": max(dates) if dates else None},
             "totals": {"avg_sentiment": round(sum(sentiments) / len(sentiments), 3) if sentiments else 0.0},
         }
@@ -328,6 +397,50 @@ class RestaurantOpsModule:
 
         db.commit()
         return {"status": "success", "venue_id": venue.id, "recipes_upserted": upserted}
+
+    def get_venue_settings(self, db: Session, venue_id: Optional[str] = None) -> dict:
+        venue = self._get_or_create_venue(db, venue_id)
+        targets = self._kpi_targets(venue)
+        return {
+            "venue_id": venue.id,
+            "name": venue.name,
+            "currency": venue.currency,
+            "timezone": venue.timezone,
+            "targets": targets,
+        }
+
+    def update_venue_settings(
+        self,
+        db: Session,
+        venue_id: Optional[str] = None,
+        labor_target_pct: Optional[float] = None,
+        food_target_pct: Optional[float] = None,
+        sales_drop_alert_pct: Optional[float] = None,
+    ) -> dict:
+        venue = self._get_or_create_venue(db, venue_id)
+
+        def _validated(value: Optional[float], field: str) -> Optional[float]:
+            if value is None:
+                return None
+            v = self._parse_float(value, -1.0)
+            if v < 0 or v > 100:
+                raise ValueError(f"{field} must be between 0 and 100")
+            return v
+
+        labor = _validated(labor_target_pct, "labor_target_pct")
+        food = _validated(food_target_pct, "food_target_pct")
+        sales = _validated(sales_drop_alert_pct, "sales_drop_alert_pct")
+
+        if labor is not None:
+            venue.labor_target_pct = labor
+        if food is not None:
+            venue.food_target_pct = food
+        if sales is not None:
+            venue.sales_drop_alert_pct = sales
+
+        db.commit()
+        db.refresh(venue)
+        return self.get_venue_settings(db, venue.id)
 
     # Analytics -----------------------------------------------------------------
 
@@ -499,6 +612,7 @@ class RestaurantOpsModule:
     def get_control_tower_daily(self, db: Session, date: str, venue_id: Optional[str] = None) -> dict:
         venue = self._get_or_create_venue(db, venue_id)
         d = self._normalize_date(date)
+        targets = self._kpi_targets(venue)
 
         sales = db.query(RestaurantSale).filter(RestaurantSale.venue_id == venue.id, RestaurantSale.sale_date == d).all()
         labor = db.query(RestaurantLaborShift).filter(RestaurantLaborShift.venue_id == venue.id, RestaurantLaborShift.shift_date == d).all()
@@ -525,7 +639,7 @@ class RestaurantOpsModule:
         rev_vs_fc = ((revenue - forecast) / forecast * 100) if forecast else 0.0
 
         anomalies: list[dict] = []
-        if forecast and revenue < forecast * 0.9:
+        if forecast and revenue < forecast * (1 - (targets["sales_drop_alert_pct"] / 100.0)):
             anomalies.append({
                 "category": "sales_gap",
                 "severity": "high",
@@ -533,20 +647,20 @@ class RestaurantOpsModule:
                 "why": f"Revenue is {abs(rev_vs_fc):.1f}% below forecast.",
                 "metric": round(rev_vs_fc, 2),
             })
-        if labor_pct > 35:
+        if labor_pct > targets["labor_target_pct"]:
             anomalies.append({
                 "category": "labor_cost",
                 "severity": "high",
                 "title": "Labor cost above target",
-                "why": f"Labor cost is {labor_pct:.1f}% vs target 30.0%.",
+                "why": f"Labor cost is {labor_pct:.1f}% vs target {targets['labor_target_pct']:.1f}%.",
                 "metric": round(labor_pct, 2),
             })
-        if food_pct > 32:
+        if food_pct > targets["food_target_pct"]:
             anomalies.append({
                 "category": "food_cost",
                 "severity": "medium",
                 "title": "Food cost above target",
-                "why": f"Food cost is {food_pct:.1f}% vs target 30.0%.",
+                "why": f"Food cost is {food_pct:.1f}% vs target {targets['food_target_pct']:.1f}%.",
                 "metric": round(food_pct, 2),
             })
 
@@ -577,7 +691,11 @@ class RestaurantOpsModule:
                         title=a["title"],
                         why=a["why"],
                         metric_value=a["metric"],
-                        threshold=0.0,
+                        threshold=targets["labor_target_pct"] if a["category"] == "labor_cost" else (
+                            targets["food_target_pct"] if a["category"] == "food_cost" else (
+                                targets["sales_drop_alert_pct"] if a["category"] == "sales_gap" else 0.0
+                            )
+                        ),
                     )
                 )
         db.commit()
@@ -597,6 +715,7 @@ class RestaurantOpsModule:
                 "food_cost_pct": round(food_pct, 2),
                 "review_sentiment": round(sentiment, 3),
             },
+            "targets": targets,
             "anomalies": anomalies,
             "stock_alerts": inv_alerts,
         }
@@ -604,6 +723,7 @@ class RestaurantOpsModule:
     def get_daily_recommendations(self, db: Session, date: str, venue_id: Optional[str] = None) -> dict:
         venue = self._get_or_create_venue(db, venue_id)
         d = self._normalize_date(date)
+        targets = self._kpi_targets(venue)
         control = self.get_control_tower_daily(db, d, venue.id)
         margin = self.get_finance_margin(db, d, d, venue.id)
         inventory = self.get_inventory_alerts(db, d, venue.id)
@@ -611,7 +731,7 @@ class RestaurantOpsModule:
         k = control["kpis"]
         recs: list[dict] = []
 
-        if k["revenue_vs_forecast_pct"] < -10:
+        if k["revenue_vs_forecast_pct"] < -targets["sales_drop_alert_pct"]:
             recs.append({
                 "category": "sales_recovery",
                 "title": "Sales are below expected demand",
@@ -620,20 +740,20 @@ class RestaurantOpsModule:
                 "next_action": "Run a same-day promotion on top-selling dishes and adjust labor for late shift.",
                 "automatable": True,
             })
-        if k["labor_cost_pct"] > 30:
+        if k["labor_cost_pct"] > targets["labor_target_pct"]:
             recs.append({
                 "category": "labor_optimization",
                 "title": "Labor pressure detected",
-                "warning": f"Labor is {k['labor_cost_pct']:.1f}% vs target 30.0%.",
+                "warning": f"Labor is {k['labor_cost_pct']:.1f}% vs target {targets['labor_target_pct']:.1f}%.",
                 "why": "Staffing is currently above demand-adjusted target.",
                 "next_action": "Offer voluntary early release for one FOH shift and rebalance tomorrow's roster.",
                 "automatable": True,
             })
-        if k["food_cost_pct"] > 30:
+        if k["food_cost_pct"] > targets["food_target_pct"]:
             recs.append({
                 "category": "food_cost",
                 "title": "Food cost above healthy range",
-                "warning": f"Food cost is {k['food_cost_pct']:.1f}% vs target 30.0%.",
+                "warning": f"Food cost is {k['food_cost_pct']:.1f}% vs target {targets['food_target_pct']:.1f}%.",
                 "why": "Recipe cost and usage variance are diluting gross margin.",
                 "next_action": "Audit portioning on top 3 dishes and test a 3-5% repricing where demand is inelastic.",
                 "automatable": False,
@@ -695,7 +815,7 @@ class RestaurantOpsModule:
                 )
         db.commit()
 
-        return {"date": d, "venue_id": venue.id, "recommendations": recs, "kpi_snapshot": k}
+        return {"date": d, "venue_id": venue.id, "targets": targets, "recommendations": recs, "kpi_snapshot": k}
 
     # Extended core functionality ------------------------------------------------
 

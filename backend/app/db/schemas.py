@@ -407,6 +407,12 @@ class HireScenarioRequest(BaseModel):
     venue_id: Optional[str] = None
 
 
+class VenueKpiSettingsRequest(BaseModel):
+    labor_target_pct: Optional[float] = None
+    food_target_pct: Optional[float] = None
+    sales_drop_alert_pct: Optional[float] = None
+
+
 # ── Analytics & Reporting ─────────────────────────────────────────────
 
 class DashboardRequest(BaseModel):

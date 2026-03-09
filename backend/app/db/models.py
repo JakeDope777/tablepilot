@@ -317,6 +317,9 @@ class RestaurantVenue(Base):
     name = Column(String, nullable=False)
     currency = Column(String, default="EUR", nullable=False)
     timezone = Column(String, default="Europe/Madrid", nullable=False)
+    labor_target_pct = Column(Float, default=30.0, nullable=False)
+    food_target_pct = Column(Float, default=30.0, nullable=False)
+    sales_drop_alert_pct = Column(Float, default=10.0, nullable=False)
     created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc), nullable=False)
     updated_at = Column(
         DateTime,

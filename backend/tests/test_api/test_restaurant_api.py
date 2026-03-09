@@ -31,6 +31,21 @@ def test_ingest_pos_csv_missing_columns_returns_400(client):
     assert "Missing required columns" in response.json()["detail"]
 
 
+def test_ingest_pos_csv_returns_row_level_errors_for_bad_rows(client):
+    csv_text = (
+        "date,menu_item,quantity,net_sales,covers,channel,forecast_revenue\n"
+        "not-a-date,Burger,10,180,20,in_store,200\n"
+        "2026-03-08,Chicken Plate,8,160,15,in_store,170\n"
+    )
+    response = _upload(client, "/restaurant/ingest/pos-csv?venue_id=venue-row-errors", csv_text)
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["rows_ingested"] == 1
+    assert payload["rows_skipped"] == 1
+    assert len(payload["row_errors"]) == 1
+    assert payload["row_errors"][0]["row_number"] == 2
+
+
 def test_control_tower_margin_alerts_and_recommendations_flow(client):
     pos_csv = (
         "date,menu_item,quantity,net_sales,covers,channel,forecast_revenue\n"
@@ -99,6 +114,39 @@ def test_control_tower_margin_alerts_and_recommendations_flow(client):
     rec_data = recs.json()
     assert len(rec_data["recommendations"]) >= 1
     assert all("next_action" in r for r in rec_data["recommendations"])
+
+
+def test_venue_threshold_settings_change_recommendation_behavior(client):
+    venue_id = "venue-thresholds"
+    pos_csv = (
+        "date,menu_item,quantity,net_sales,covers,channel,forecast_revenue\n"
+        "2026-03-10,Burger,10,200,20,in_store,200\n"
+    )
+    labor_csv = (
+        "date,staff_name,role,hours_worked,hourly_rate,labor_cost,scheduled_covers\n"
+        "2026-03-10,Alice,server,4,17.5,70,20\n"
+    )
+
+    assert _upload(client, f"/restaurant/ingest/pos-csv?venue_id={venue_id}", pos_csv).status_code == 200
+    assert _upload(client, f"/restaurant/ingest/labor-csv?venue_id={venue_id}", labor_csv).status_code == 200
+
+    baseline = client.get("/restaurant/recommendations/daily", params={"date": "2026-03-10", "venue_id": venue_id})
+    assert baseline.status_code == 200
+    baseline_categories = {r["category"] for r in baseline.json()["recommendations"]}
+    assert "labor_optimization" in baseline_categories
+
+    update = client.put(
+        "/restaurant/venue/settings",
+        params={"venue_id": venue_id},
+        json={"labor_target_pct": 40.0},
+    )
+    assert update.status_code == 200
+    assert update.json()["targets"]["labor_target_pct"] == 40.0
+
+    tuned = client.get("/restaurant/recommendations/daily", params={"date": "2026-03-10", "venue_id": venue_id})
+    assert tuned.status_code == 200
+    tuned_categories = {r["category"] for r in tuned.json()["recommendations"]}
+    assert "labor_optimization" not in tuned_categories
 
 
 def test_chat_routes_restaurant_intent_to_restaurant_module(client):

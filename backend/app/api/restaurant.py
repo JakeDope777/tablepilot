@@ -4,7 +4,7 @@ from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
 from sqlalchemy.orm import Session
 from typing import Optional
 
-from ..db.schemas import HireScenarioRequest, RecipeBatchRequest
+from ..db.schemas import HireScenarioRequest, RecipeBatchRequest, VenueKpiSettingsRequest
 from ..db.session import get_db
 from ..modules.restaurant_ops import RestaurantOpsModule
 
@@ -81,6 +81,37 @@ async def ingest_recipes(
             db,
             [recipe.model_dump() for recipe in payload.recipes],
             venue_id=venue_id,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+
+@router.get("/venue/settings")
+async def get_venue_settings(
+    venue_id: Optional[str] = Query(default=None),
+    db: Session = Depends(get_db),
+    module: RestaurantOpsModule = Depends(get_module),
+):
+    try:
+        return module.get_venue_settings(db, venue_id=venue_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+
+@router.put("/venue/settings")
+async def update_venue_settings(
+    payload: VenueKpiSettingsRequest,
+    venue_id: Optional[str] = Query(default=None),
+    db: Session = Depends(get_db),
+    module: RestaurantOpsModule = Depends(get_module),
+):
+    try:
+        return module.update_venue_settings(
+            db,
+            venue_id=venue_id,
+            labor_target_pct=payload.labor_target_pct,
+            food_target_pct=payload.food_target_pct,
+            sales_drop_alert_pct=payload.sales_drop_alert_pct,
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
